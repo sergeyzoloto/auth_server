@@ -51,7 +51,8 @@ Copy the token and inspect its payload to see the role claims Spring will read:
 ```bash
 echo "<paste the token here>" | cut -d. -f2 | python3 -c "
 import sys, base64, json
-s = sys.stdin.read().strip() + '=='
+s = sys.stdin.read().strip()
+s += '=' * (-len(s) % 4)
 print(json.dumps(json.loads(base64.urlsafe_b64decode(s)), indent=2))
 "
 ```
@@ -71,8 +72,11 @@ Services running in the same Docker network as Keycloak should use
 `http://keycloak:8080/realms/myapps` as the issuer, not `localhost`.
 
 ## 5. Adding a fourth project, or changing a client
-Edit `realm-export.json` (copy one of the three client blocks, change
-`clientId` and `secret`), then force a fresh import:
+Edit `realm-export.json`: copy one of the three client blocks in `clients`
+(change `clientId` and `secret`), and add a matching entry under
+`roles.client` for its `user`/`admin` roles — client roles live in the
+realm-level `roles.client` map, *not* inside the client object, or the
+import fails with `Unrecognized field "roles"`. Then force a fresh import:
 ```bash
 docker compose down -v && docker compose up -d
 ```

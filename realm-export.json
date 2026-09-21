@@ -3,8 +3,37 @@
   "enabled": true,
   "roles": {
     "realm": [
-      { "name": "user", "description": "Base role shared by every project in this realm" }
-    ]
+      {
+        "name": "user",
+        "description": "Base role shared by every project in this realm"
+      }
+    ],
+    "client": {
+      "shop-api": [
+        {
+          "name": "user"
+        },
+        {
+          "name": "admin"
+        }
+      ],
+      "blog-api": [
+        {
+          "name": "user"
+        },
+        {
+          "name": "admin"
+        }
+      ],
+      "admin-app": [
+        {
+          "name": "user"
+        },
+        {
+          "name": "admin"
+        }
+      ]
+    }
   },
   "clients": [
     {
@@ -13,11 +42,7 @@
       "publicClient": false,
       "secret": "shop-api-secret",
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": true,
-      "roles": [
-        { "name": "user" },
-        { "name": "admin" }
-      ]
+      "serviceAccountsEnabled": true
     },
     {
       "clientId": "blog-api",
@@ -25,11 +50,7 @@
       "publicClient": false,
       "secret": "blog-api-secret",
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": true,
-      "roles": [
-        { "name": "user" },
-        { "name": "admin" }
-      ]
+      "serviceAccountsEnabled": true
     },
     {
       "clientId": "admin-app",
@@ -37,11 +58,7 @@
       "publicClient": false,
       "secret": "admin-app-secret",
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": true,
-      "roles": [
-        { "name": "user" },
-        { "name": "admin" }
-      ]
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
@@ -51,12 +68,23 @@
       "emailVerified": true,
       "email": "testuser@example.com",
       "credentials": [
-        { "type": "password", "value": "test1234", "temporary": false }
+        {
+          "type": "password",
+          "value": "test1234",
+          "temporary": false
+        }
       ],
-      "realmRoles": ["user"],
+      "realmRoles": [
+        "user"
+      ],
       "clientRoles": {
-        "shop-api": ["user"]
-      }
+        "shop-api": [
+          "user"
+        ]
+      },
+      "firstName": "Test",
+      "lastName": "User",
+      "requiredActions": []
     }
   ]
 }
