@@ -1,0 +1,62 @@
+{
+  "realm": "myapps",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "Base role shared by every project in this realm" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "shop-api",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "shop-api-secret",
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "roles": [
+        { "name": "user" },
+        { "name": "admin" }
+      ]
+    },
+    {
+      "clientId": "blog-api",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "blog-api-secret",
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "roles": [
+        { "name": "user" },
+        { "name": "admin" }
+      ]
+    },
+    {
+      "clientId": "admin-app",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "admin-app-secret",
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "roles": [
+        { "name": "user" },
+        { "name": "admin" }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "testuser@example.com",
+      "credentials": [
+        { "type": "password", "value": "test1234", "temporary": false }
+      ],
+      "realmRoles": ["user"],
+      "clientRoles": {
+        "shop-api": ["user"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Add to shop-api's Spring Boot config.
+# From another container on the same docker network, replace "localhost" with
+# the service name "keycloak" (e.g. http://keycloak:8080/realms/myapps).
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/myapps
