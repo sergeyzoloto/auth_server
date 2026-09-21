@@ -15,6 +15,11 @@ per-project auth code.
 keycloak-auth-server/
 ├── docker-compose.yml         # Keycloak + Postgres
 ├── realm-export.json          # realm, clients, roles, one test user — imported on first boot
+├── docker-compose.prod.yml    # production: Keycloak + Caddy (TLS), external Postgres — see PRODUCTION.md
+├── Dockerfile                 # optimized Keycloak image for production
+├── Caddyfile                  # TLS + path filtering in front of Keycloak
+├── realm-prod.json            # production realm: no test user, no secrets
+├── .env.example               # production settings template (copy to .env)
 └── spring-client-example/
     ├── application.yml        # points a Spring service at this realm
     └── SecurityConfig.java    # maps Keycloak roles into Spring authorities
@@ -86,6 +91,9 @@ console. On a system with real data, add the client through the Admin
 Console or the Admin REST API instead of wiping the volume.
 
 ## Before this touches real production
+A production stack that does all of the below is in `docker-compose.prod.yml`;
+[PRODUCTION.md](PRODUCTION.md) walks through deploying it.
+
 This is deliberately a local/dev setup: `start-dev` skips hostname and TLS
 checks and isn't meant for the open internet. Before exposing it beyond
 your machine:

@@ -1,0 +1,69 @@
+# Production stack: stateless Keycloak behind Caddy (TLS via Let's Encrypt).
+# There is no database container — Keycloak uses an external managed Postgres
+# (e.g. Supabase), so this host keeps no user data. Settings come from .env
+# (see .env.example); compose refuses to start if a required one is missing.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  keycloak:
+    build: . # Keycloak version is pinned in the Dockerfile
+    container_name: keycloak
+    restart: unless-stopped
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      KC_DB_URL: jdbc:postgresql://${DB_HOST:?set DB_HOST in .env}:${DB_PORT:-5432}/${DB_NAME:-postgres}?${DB_JDBC_PARAMS:-sslmode=require}
+      KC_DB_USERNAME: ${DB_USER:?set DB_USER in .env}
+      KC_DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      KC_DB_SCHEMA: ${DB_SCHEMA:-keycloak}
+      KC_DB_POOL_INITIAL_SIZE: "2"
+      KC_DB_POOL_MIN_SIZE: "2"
+      KC_DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
+      KC_HOSTNAME: https://${AUTH_HOSTNAME:?set AUTH_HOSTNAME in .env}
+      # Plain HTTP only inside the compose network; Caddy terminates TLS.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      # Acted on only at the very first start (empty database) and ignored after,
+      # but must stay set: Keycloak refuses to start on an empty-but-present value.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:?set KC_BOOTSTRAP_ADMIN_USERNAME in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set KC_BOOTSTRAP_ADMIN_PASSWORD in .env}
+    volumes:
+      - ./realm-prod.json:/opt/keycloak/data/import/realm-prod.json:ro
+    # The image has no curl; bash's /dev/tcp hits the management port instead.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && read -r status <&3 && [[ $$status == *' 200 '* ]]"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # First boot against a remote database creates ~100 tables; give it time.
+      start_period: 300s
+    mem_limit: 2g
+    logging: *logging
+
+  caddy:
+    image: caddy:2.11.4
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      AUTH_HOSTNAME: ${AUTH_HOSTNAME}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:?set ADMIN_ALLOWED_IPS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # issued certificates only; re-issued if lost
+      - caddy_config:/config
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
