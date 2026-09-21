@@ -12,8 +12,9 @@ for local work; never deploy it: it has a test user and fixed client secrets.
 | Managed Postgres | users, sessions, clients, signing keys, events     | everything — this is what you back up |
 
 ## Prerequisites
-- A Linux host with Docker and Compose v2, ports 80 and 443 open to the
-  internet, at least 2 vCPU / 4 GB RAM (Keycloak is capped at 2 GB).
+- A Linux host with Docker 27+ and Compose v2, ports 80 and 443 open to the
+  internet, at least 2 vCPU / 4 GB RAM (Keycloak is capped at 2 GB). IPv6 on
+  the host is recommended: it allows the direct database connection below.
 - A DNS record for the auth hostname (e.g. `auth.example.com`) pointing at
   the host.
 - A Supabase project on a paid plan, in a region close to the host. Every
@@ -28,10 +29,20 @@ for local work; never deploy it: it has a test user and fixed client secrets.
    Keycloak creates its tables but not the schema. Don't use `public`: on
    Supabase it's exposed through the Data API. Don't add `keycloak` to
    *API settings → Exposed schemas* either.
-2. Open *Connect* and take the **Session pooler** details: host, port 5432,
-   user `postgres.<project-ref>`, and the database password. Not the
-   Transaction pooler (port 6543) — Keycloak keeps its own connection pool
-   and relies on prepared statements.
+2. Open *Connect* and pick the connection:
+   - **Direct connection** (preferred): host `db.<project-ref>.supabase.co`,
+     user `postgres`. Nothing sits between Keycloak and the database, but the
+     address is IPv6-only, so the host needs working IPv6. Check on the host:
+     ```bash
+     timeout 5 bash -c 'exec 3<>/dev/tcp/db.<project-ref>.supabase.co/5432' && echo ok
+     ```
+     The compose network is dual-stack, so containers use the host's IPv6.
+   - **Session pooler**, if that check fails: host
+     `aws-<n>-<region>.pooler.supabase.com`, port 5432, user
+     `postgres.<project-ref>`. It is reachable over IPv4.
+
+   Never the Transaction pooler (port 6543): Keycloak keeps its own
+   connection pool and relies on prepared statements.
 
 ## 2. Configure
 ```bash
@@ -99,6 +110,78 @@ curl -s -o /dev/null -w '%{http_code}\n' $H/admin/                          # 40
 ```
 Plus the client-credentials call above, which should return an `access_token`.
 
+### Check that data reaches the database
+Run these read-only queries in the Supabase SQL Editor before and after the
+test below.
+
+```sql
+-- 1. Per realm: people (service accounts excluded), active sessions, stored events
+select r.name as realm,
+  (select count(*) from keycloak.user_entity u
+    where u.realm_id = r.id and u.service_account_client_link is null) as users,
+  (select count(*) from keycloak.offline_user_session s
+    where s.realm_id = r.id and s.offline_flag = '0') as active_sessions,
+  (select count(*) from keycloak.event_entity e where e.realm_id = r.id) as events
+from keycloak.realm r
+order by r.name;
+```
+
+```sql
+-- 2. Users in myapps and their active sessions
+select u.username, u.email,
+       to_timestamp(u.created_timestamp / 1000.0) as created,
+       count(s.user_session_id) as active_sessions,
+       to_timestamp(max(s.last_session_refresh)) as last_seen
+from keycloak.user_entity u
+join keycloak.realm r on r.id = u.realm_id
+left join keycloak.offline_user_session s
+       on s.user_id = u.id and s.offline_flag = '0'
+where r.name = 'myapps' and u.service_account_client_link is null
+group by u.id
+order by u.created_timestamp desc;
+```
+
+```sql
+-- 3. Latest login events in myapps
+select to_timestamp(e.event_time / 1000.0) as at, e.type, e.client_id,
+       u.username, e.ip_address, e.error
+from keycloak.event_entity e
+join keycloak.realm r on r.id = e.realm_id
+left join keycloak.user_entity u on u.id = e.user_id
+where r.name = 'myapps'
+order by e.event_time desc
+limit 20;
+```
+
+1. In the admin console, open realm `myapps` → *Users → Add user*. Fill in
+   email, first and last name, or the first login asks the user to complete
+   the profile. Under *Credentials*, set a password of 12+ characters with
+   *Temporary* off. **Query 2** now lists the user.
+2. In a private browser window, sign in as that user at
+   `https://<AUTH_HOSTNAME>/realms/myapps/account`. **Query 1** shows one
+   more session and event; **query 3** shows `LOGIN` from `account-console`.
+3. In another private window, try a wrong password. **Query 3** shows
+   `LOGIN_ERROR` with `invalid_user_credentials`.
+4. Recreate Keycloak:
+   `docker compose -f docker-compose.prod.yml up -d --force-recreate keycloak`.
+   The user and the session from step 2 survive. The new container holds
+   nothing locally, so both came from the database.
+5. Delete the user. **Query 2** is empty and the session is gone. Its events
+   stay, with an empty username, until they expire after 30 days.
+
+Reading the results:
+- `user_entity` also holds `service-account-<client>` rows. These are the
+  clients' own identities for client credentials, not people; the queries
+  leave them out.
+- Sessions in `master` are admin console sign-ins. `master` stores no
+  events; only `myapps` has them enabled.
+- `ip_address` is the client address Caddy saw. Requests from the host
+  itself (e.g. through `localhost`) show the Docker gateway.
+- Supabase shows the times in UTC.
+- Read these tables freely, but never edit them: Keycloak caches realms,
+  clients and users in memory and won't notice direct changes. Make changes
+  in the admin console or through the Admin REST API.
+
 ## What the setup enforces
 - **Exposed paths**: `/realms/*`, `/resources/*`, `/.well-known/*` and
   `/robots.txt`. The admin console (`/admin`) and the `master` realm are
@@ -106,6 +189,10 @@ Plus the client-credentials call above, which should return an `access_token`.
   and metrics, returns 404.
 - **Keycloak isn't published directly**: only Caddy listens on the host, so
   the `X-Forwarded-*` headers Keycloak trusts always come from Caddy.
+- **Real client addresses**: the compose network is dual-stack. On an
+  IPv4-only Docker network, every client connecting over IPv6 reaches Caddy
+  as the Docker gateway (`172.x.0.1`). That silently breaks
+  `ADMIN_ALLOWED_IPS`, and the addresses in Keycloak's login events.
 - **Realm**: brute-force lockout after 10 failed logins (waits growing up to
   15 min), passwords of at least 12 characters that differ from the username
   and email, self-registration off, login events kept for 30 days.
@@ -129,12 +216,15 @@ Plus the client-credentials call above, which should return an `access_token`.
 ## Troubleshooting
 - `read and write permissions for the 'keycloak.databasechangelog' table`:
   the `keycloak` schema doesn't exist (step 1).
-- `password authentication failed`: the pooler username is
-  `postgres.<project-ref>`, not `postgres`.
-- **Admin console returns 404 from an allowed address**: Caddy sees a
-  different source IP. Most often the browser connects over IPv6 while only
-  the IPv4 address is allowed. Check `curl -6 ifconfig.me` and add that
-  prefix to `ADMIN_ALLOWED_IPS`.
+- `password authentication failed`: the username is `postgres` for the
+  direct connection but `postgres.<project-ref>` for the Session pooler. If
+  the password contains `$`, wrap it in single quotes in `.env`.
+- **Timeouts or `Network is unreachable` to `db.<project-ref>.supabase.co`**:
+  the host has no working IPv6. Use the Session pooler.
+- **Admin console returns 404 from an allowed address**: the browser connects
+  over the other IP version. Most often only the IPv4 address is listed
+  while the browser uses IPv6. Check `curl -4 ifconfig.me` and
+  `curl -6 ifconfig.me`, and list both.
 - **No certificate**: Let's Encrypt validates over ports 80/443, so the DNS
   record must already point at this host and both ports must be open.
 
