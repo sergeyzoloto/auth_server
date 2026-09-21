@@ -2,6 +2,9 @@
 # There is no database container — Keycloak uses an external managed Postgres
 # (e.g. Supabase), so this host keeps no user data. Settings come from .env
 # (see .env.example); compose refuses to start if a required one is missing.
+# Own project name, so it can run next to the dev stack from this directory.
+name: auth-server-prod
+
 x-logging: &logging
   driver: json-file
   options:
@@ -11,7 +14,6 @@ x-logging: &logging
 services:
   keycloak:
     build: . # Keycloak version is pinned in the Dockerfile
-    container_name: keycloak
     restart: unless-stopped
     command: ["start", "--optimized", "--import-realm"]
     environment:
@@ -45,7 +47,6 @@ services:
 
   caddy:
     image: caddy:2.11.4
-    container_name: caddy
     restart: unless-stopped
     ports:
       - "80:80"
@@ -63,6 +64,14 @@ services:
       keycloak:
         condition: service_healthy
     logging: *logging
+
+networks:
+  default:
+    # Dual-stack (Docker 27+ picks the IPv6 subnet itself). Keycloak can then
+    # reach IPv6-only databases such as Supabase's direct connection, and Caddy
+    # sees IPv6 clients' real addresses — on an IPv4-only network every IPv6
+    # client shows up as the Docker gateway, which breaks ADMIN_ALLOWED_IPS.
+    enable_ipv6: true
 
 volumes:
   caddy_data:
