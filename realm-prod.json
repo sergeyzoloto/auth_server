@@ -18,53 +18,39 @@
       { "name": "user", "description": "Base role shared by every project in this realm" }
     ],
     "client": {
-      "shop-api": [
-        { "name": "user" },
-        { "name": "admin" }
-      ],
-      "blog-api": [
-        { "name": "user" },
-        { "name": "admin" }
-      ],
-      "admin-app": [
-        { "name": "user" },
-        { "name": "admin" }
+      "finance-tracker": [
+        { "name": "user", "description": "Uses Finance Tracker: own categories, transactions and dashboard" },
+        { "name": "admin", "description": "Reserved for Finance Tracker admin features; grants nothing yet" }
       ]
     }
   },
   "clients": [
     {
-      "clientId": "shop-api",
+      "clientId": "finance-tracker",
       "enabled": true,
       "publicClient": false,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
-      "redirectUris": ["https://shop.example.com/*"],
-      "webOrigins": ["+"],
-      "attributes": { "post.logout.redirect.uris": "https://shop.example.com/*" }
-    },
-    {
-      "clientId": "blog-api",
-      "enabled": true,
-      "publicClient": false,
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
-      "redirectUris": ["https://blog.example.com/*"],
-      "webOrigins": ["+"],
-      "attributes": { "post.logout.redirect.uris": "https://blog.example.com/*" }
-    },
-    {
-      "clientId": "admin-app",
-      "enabled": true,
-      "publicClient": false,
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
-      "redirectUris": ["https://admin.example.com/*"],
-      "webOrigins": ["+"],
-      "attributes": { "post.logout.redirect.uris": "https://admin.example.com/*" }
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://app.finance-nl.com/login/oauth2/code/keycloak"],
+      "webOrigins": [],
+      "attributes": {
+        "post.logout.redirect.uris": "https://app.finance-nl.com/",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "finance-tracker audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "finance-tracker",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ]
 }
