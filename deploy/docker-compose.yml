@@ -1,6 +1,6 @@
-# Production-вариант стека: Keycloak + Postgres + Caddy (автоматический HTTPS).
-# Наружу открыты ТОЛЬКО порты 80/443 (Caddy). Postgres и Keycloak доступны
-# лишь внутри docker-сети; health-порт 9000 — только с самого сервера.
+# Production variant of the stack: Keycloak + Postgres + Caddy (automatic HTTPS).
+# ONLY ports 80/443 (Caddy) are exposed publicly. Postgres and Keycloak are reachable
+# only inside the docker network; health port 9000 only from the server itself.
 services:
   postgres:
     image: postgres:16
@@ -16,11 +16,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # ports: намеренно НЕТ — БД не должна быть видна из интернета
+    # ports: intentionally NONE — the DB must not be reachable from the internet
 
   keycloak:
     image: quay.io/keycloak/keycloak:${KC_VERSION:?set KC_VERSION in .env}
-    command: start --import-realm          # prod-режим вместо start-dev
+    command: start --import-realm          # prod mode instead of start-dev
     restart: unless-stopped
     depends_on:
       postgres:
@@ -30,16 +30,16 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KC_HOSTNAME: https://${KC_DOMAIN:?set KC_DOMAIN in .env}   # публичный URL целиком
-      KC_HTTP_ENABLED: "true"            # TLS снимает Caddy, до Keycloak идёт HTTP внутри сети
-      KC_PROXY_HEADERS: xforwarded       # доверять X-Forwarded-* от Caddy
-      KC_HEALTH_ENABLED: "true"          # /health/* на порту 9000
+      KC_HOSTNAME: https://${KC_DOMAIN:?set KC_DOMAIN in .env}   # full public URL
+      KC_HTTP_ENABLED: "true"            # Caddy terminates TLS; plain HTTP to Keycloak inside the network
+      KC_PROXY_HEADERS: xforwarded       # trust X-Forwarded-* from Caddy
+      KC_HEALTH_ENABLED: "true"          # /health/* on port 9000
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:?set KC_ADMIN_USER in .env}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?set KC_ADMIN_PASSWORD in .env}
     volumes:
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     ports:
-      - "127.0.0.1:9000:9000"            # health-check только с localhost сервера
+      - "127.0.0.1:9000:9000"            # health check only from the server's localhost
 
   caddy:
     image: caddy:2
@@ -54,7 +54,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data                 # здесь хранятся TLS-сертификаты — не удалять
+      - caddy_data:/data                 # TLS certificates are stored here — do not delete
       - caddy_config:/config
 
 volumes:
