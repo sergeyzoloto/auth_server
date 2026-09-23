@@ -1,0 +1,5 @@
+# Caddy automatically obtains and renews a Let's Encrypt certificate for the domain,
+# redirects HTTP -> HTTPS, and sets X-Forwarded-For/Proto/Host.
+{$KC_DOMAIN} {
+	reverse_proxy keycloak:8080
+}

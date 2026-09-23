@@ -1,1 +1,4 @@
 .env
+deploy/.env
+deploy/realm-export.json
+deploy/smoke.env

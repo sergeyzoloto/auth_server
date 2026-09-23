@@ -20,6 +20,14 @@ for local work; never deploy it: it has a test user and fixed client secrets.
 - A Supabase project on a paid plan, in a region close to the host. Every
   login makes several database round-trips, and the Free plan has no
   automatic backups — not acceptable for the database behind every login.
+- An SMTP provider for password-reset email (Brevo below, but any provider
+  works), with your mail domain authenticated there (DKIM and DMARC records
+  in DNS) and a verified sender such as `no-reply@<mail domain>`. The host
+  must be able to reach the provider on port 587; some hosting providers
+  block outgoing SMTP until you ask them to unblock it:
+  ```bash
+  timeout 5 bash -c 'exec 3<>/dev/tcp/smtp-relay.brevo.com/587' && echo ok
+  ```
 
 ## 1. Prepare the database
 1. Supabase SQL Editor:
@@ -83,7 +91,47 @@ From now on the `KC_BOOTSTRAP_ADMIN_*` values are ignored, but leave them in
 `.env`: Keycloak refuses to start when they're present but empty, and compose
 refuses to start when they're missing.
 
-## 5. Connect the projects
+## 5. Set up email
+Keycloak sends password-reset (and, optionally, email-verification) mail
+through the SMTP provider. This is a manual step: the SMTP password must stay
+out of git, so it isn't in `realm-prod.json`. For the same reason the realm
+file keeps `resetPasswordAllowed: false` — on a fresh install without SMTP,
+the *Forgot password?* link would lead nowhere.
+
+1. At the provider, create an SMTP key for Keycloak. On Brevo: *Settings →
+   SMTP & API → SMTP → Generate a new SMTP key*. It starts with `xsmtpsib-`
+   (an `xkeysib-` key is an API key and won't work for SMTP), and it's shown
+   only once. Note the **Login** on the same tab too: it can differ from the
+   account email.
+2. In the **master** realm, give your admin user an email address you read.
+   *Test connection* below sends its test mail there.
+3. In the **myapps** realm, open *Realm settings → Email*:
+
+   | Field | Value |
+   | --- | --- |
+   | From | the verified sender, e.g. `no-reply@<mail domain>` |
+   | From display name | your product name |
+   | Envelope from | empty (the provider sets the return path) |
+   | Host / Port | `smtp-relay.brevo.com` / `587` |
+   | Encryption | *Enable StartTLS* on, *Enable SSL* off |
+   | Authentication | on. Username: the provider's *Login*. Password: the SMTP key |
+
+   *Save*, then *Test connection*.
+4. Still in `myapps`, open *Realm settings → Login* and turn on
+   **Forgot password**.
+5. **Verify email** is optional. Once it's on, every user with *Email
+   verified* off must verify at their next login. See who that affects
+   first:
+   ```sql
+   select u.username, u.email
+   from keycloak.user_entity u join keycloak.realm r on r.id = u.realm_id
+   where r.name = 'myapps' and u.service_account_client_link is null and not u.email_verified;
+   ```
+
+Configure SMTP only in `myapps`. `master` holds only admins, who use OTP and
+don't need a password-reset link.
+
+## 6. Connect the projects
 Client secrets aren't in any file — Keycloak generated them during import.
 Each project needs:
 - **Issuer URL**: `https://<AUTH_HOSTNAME>/realms/myapps`
@@ -102,7 +150,7 @@ How apps get tokens:
     -d grant_type=client_credentials -d client_id=shop-api -d client_secret=<secret>
   ```
 
-## 6. Verify
+## 7. Verify
 ```bash
 H=https://<AUTH_HOSTNAME>
 curl -s $H/realms/myapps/.well-known/openid-configuration | jq -r .issuer   # https://<AUTH_HOSTNAME>/realms/myapps
@@ -166,7 +214,15 @@ limit 20;
    `docker compose -f docker-compose.prod.yml up -d --force-recreate keycloak`.
    The user and the session from step 2 survive. The new container holds
    nothing locally, so both came from the database.
-5. Delete the user. **Query 2** is empty and the session is gone. Its events
+5. In a private window, open the account page again, click *Forgot
+   Password?* and enter the user's email (use a mailbox you can read in
+   step 1). The mail arrives in the inbox, not spam; in Gmail, *Show
+   original* shows DKIM `PASS` with `d=<mail domain>` and DMARC `PASS`.
+   SPF passes for the provider's own envelope domain, not yours — that's
+   expected, and DMARC aligns through DKIM. The reset link works for 5
+   minutes (*Realm settings → Tokens*).
+   **Query 3** shows `SEND_RESET_PASSWORD`.
+6. Delete the user. **Query 2** is empty and the session is gone. Its events
    stay, with an empty username, until they expire after 30 days.
 
 Reading the results:
@@ -195,7 +251,8 @@ Reading the results:
   `ADMIN_ALLOWED_IPS`, and the addresses in Keycloak's login events.
 - **Realm**: brute-force lockout after 10 failed logins (waits growing up to
   15 min), passwords of at least 12 characters that differ from the username
-  and email, self-registration off, login events kept for 30 days.
+  and email, self-registration off, login events kept for 30 days. Password
+  reset stays off until you turn it on in step 5.
 - **Clients**: authorization code and client credentials only; redirects are
   accepted only to the listed URLs.
 - **Operations**: container logs are rotated (5 × 10 MB); a healthcheck
@@ -207,6 +264,9 @@ Reading the results:
   backup first: Keycloak migrates the schema on start and can't migrate back.
 - **Rotate a client secret**: *Clients → <client> → Credentials →
   Regenerate*, then update that project.
+- **Rotate the SMTP key**: generate a new one at the provider, paste it into
+  *Realm settings → Email* in `myapps`, *Test connection*, then delete the
+  old key at the provider.
 - **Backups**: Supabase Pro keeps daily backups for 7 days; point-in-time
   recovery is an add-on (needs at least the Small compute size). Test a
   restore before you depend on it.
@@ -227,10 +287,19 @@ Reading the results:
   `curl -6 ifconfig.me`, and list both.
 - **No certificate**: Let's Encrypt validates over ports 80/443, so the DNS
   record must already point at this host and both ports must be open.
+- **No email arrives**: check
+  `docker compose -f docker-compose.prod.yml logs keycloak | grep -iE 'mail|smtp'`.
+  - `535` authentication failed: the username isn't the provider's *Login*,
+    or an API key was used instead of the SMTP key.
+  - Sender rejected or not verified: *From* isn't the sender verified at the
+    provider.
+  - Timeout: port 587 is blocked (see *Prerequisites*), or *Enable SSL* is on
+    instead of *StartTLS*.
+  - *SMTP account not activated* (Brevo): new accounts wait for activation,
+    up to 48 hours; if it takes longer, fill in the company profile and ask
+    support.
 
 ## Not covered yet
-- **Email (SMTP)**: *Realm settings → Email*. Without it, password reset and
-  email verification can't work, so password reset is disabled for now.
 - **High availability**: this is one Keycloak instance. If the host goes
   down, new logins and token refreshes stop for every project. Access tokens
   already issued keep working until they expire (5 minutes), because services
