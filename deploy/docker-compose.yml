@@ -2,8 +2,10 @@
 # /opt/auth on the server with deploy/sync.sh. See PRODUCTION.md.
 # ONLY Caddy publishes ports (80/443). Postgres and Keycloak are reachable only
 # inside the compose network; Keycloak's management port 9000 only from the
-# server itself. Settings and secrets come from /opt/auth/.env (template:
-# .env.example next to this file).
+# server itself. Caddy also serves other projects' sites (/opt/caddy-sites) and
+# is the only container of this stack on their shared network edge. Settings
+# and secrets come from /opt/auth/.env (template: .env.example next to this
+# file).
 
 # Fixed project name: the data volumes are auth_keycloak_pg_data and
 # auth_caddy_data. Under any other name compose would create new, empty ones.
@@ -67,9 +69,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 120s
-    # Measured use was about 620 MiB; the limit leaves about 50% headroom.
-    # The JVM sizes its heap to 70% of this limit.
-    mem_limit: 1g
+    # The JVM sizes its heap to 70% of this limit, about 900 MiB. At 1g that
+    # cap was about 700 MiB, too tight; measured use was 540-620 MiB.
+    mem_limit: 1280m
     logging: *logging
 
   caddy:
@@ -87,9 +89,23 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Other projects' site files, imported by the Caddyfile. sync.sh creates
+      # the directory when missing and never writes into it.
+      - /opt/caddy-sites:/etc/caddy/sites:ro
       - caddy_data:/data                 # TLS certificates are stored here — do not delete
       - caddy_config:/config
+    networks:
+      - default
+      # Shared with the containers other projects put behind this Caddy.
+      # Keycloak and Postgres must never join it.
+      - edge
     logging: *logging
+
+networks:
+  # Created by sync.sh when missing and owned by no stack, so a
+  # docker compose down here or in another project leaves it alone.
+  edge:
+    external: true
 
 volumes:
   keycloak_pg_data:

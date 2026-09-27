@@ -18,6 +18,7 @@ secrets, so never deploy it.
 | `/var/backups/pg/auth/`               | nightly dumps of that database, 14 days                                  | copies on the laptop in `~/backups/finance-nl-server/auth/`              |
 | Docker volume `auth_caddy_data`       | TLS certificates, ACME account                                           | re-issued automatically                                                  |
 | `/opt/auth/.env`                      | domain, database password, admin allowlist                               | recreate by hand from `deploy/.env.example`                              |
+| `/opt/caddy-sites/`                   | other projects' Caddy site files, one per project                        | each project writes its file again (see "Hosting another project")       |
 | `/opt/auth/vault/`                    | Keycloak vault: the Brevo SMTP key, the Google and GitHub client secrets | create new ones in Brevo, Google and GitHub and write them (see "Vault") |
 | `/root/automation-cli.secret`         | secret of the admin client `automation-cli`                              | regenerate it in the admin console (see "Admin CLI")                     |
 
@@ -40,6 +41,12 @@ console or with kcadm (see "Admin CLI"), and the nightly dump covers them.
 - `/admin*` and `/realms/master*` (admin console, admin REST API, master
   realm) are proxied only for addresses in `ADMIN_ALLOWED_IPS`; everyone else
   gets 403. Caddy checks the TCP peer address, not `X-Forwarded-For`.
+- Other projects' sites: the Caddyfile imports every
+  `/opt/caddy-sites/*.caddy` (mounted read-only), and Caddy is also on the
+  Docker network `edge`, where those projects' containers are. The admin
+  allowlist, the header removal and the access log apply to
+  `auth.finance-nl.com` only. See "Hosting another project behind this
+  Caddy".
 - The `Server` and `Via` response headers are removed. Keycloak sets HSTS,
   `X-Frame-Options`, CSP `frame-ancestors`, `X-Content-Type-Options` and
   `Referrer-Policy`.
@@ -62,8 +69,11 @@ console or with kcadm (see "Admin CLI"), and the nightly dump covers them.
   then Keycloak once Postgres is healthy, then Caddy once Keycloak is healthy.
   After a reboot, Docker's restart policy (`unless-stopped`) starts all three
   at once; the reboot on 2026-09-27 came back healthy with no restarts.
-- Keycloak `mem_limit: 1g` (it used about 620 MiB without a limit; the JVM
-  heap is 70% of the limit).
+- Keycloak `mem_limit: 1280m`. The JVM heap is 70% of the limit, 896 MiB;
+  at `1g` it was about 700 MiB, too tight next to the 540–620 MiB
+  measured before. Right after the switch on 2026-09-27 it used 465 MiB.
+- Only Caddy is on the shared network `edge`; Keycloak and Postgres are
+  only on the stack's own network `auth_default`.
 - Log rotation for every container: `json-file`, 10 MB × 5 files.
 - Compose project name fixed to `auth`, so the volumes stay `auth_*`
   whatever the directory is called.
@@ -369,10 +379,15 @@ deploy/sync.sh             # the same, asks, copies, runs docker compose up -d, 
 ```
 
 `sync.sh` copies the git-tracked files of `deploy/` to `/opt/auth`, never
-`.env` or `vault/`. It warns when `deploy/` has uncommitted
-changes. The deployed revision is in `/opt/auth/.deployed-revision`, and the
-files it replaced are in `/root/auth-sync-backups/`, one directory per deploy
-named by UTC time. To undo the most recent deploy, **on the server**:
+`.env` or `vault/`. It warns when `deploy/` has uncommitted changes. Before
+copying, it creates the Docker network `edge` and the directory
+`/opt/caddy-sites` (root, mode 755) if they are missing, and never touches
+the directory's contents. It stops without changing anything if `/opt/auth`
+holds a compose file that Docker Compose would read next to or instead of
+`docker-compose.yml`, such as `docker-compose.override.yml`. The deployed
+revision is in `/opt/auth/.deployed-revision`, and the files it replaced are
+in `/root/auth-sync-backups/`, one directory per deploy named by UTC time.
+To undo the most recent deploy, **on the server**:
 
 ```bash
 last=$(ls -1 /root/auth-sync-backups | tail -1)
@@ -711,6 +726,173 @@ and holds the tokens itself:
   client's role (Client scopes → the dedicated scope → Scope → Assign
   role), and an audience mapper with Included Client Audience set to the
   API client.
+
+### Hosting another project behind this Caddy
+
+Caddy in this stack owns ports 80 and 443 and the certificates, so other
+projects on this server get their HTTPS from it. Finance Tracker at
+`https://app.finance-nl.com` is the example throughout: its code is cloned to
+`/opt/finance-tracker` on the server, and its stack is the compose project
+`finance-tracker-prod` in `/opt/finance-tracker/deploy/app`. A project
+brings two things, both from its own repository and runbook:
+
+- a site file in `/opt/caddy-sites/` on the server, here
+  `/opt/caddy-sites/finance.caddy`. The Caddyfile imports every
+  `/opt/caddy-sites/*.caddy`, mounted read-only at `/etc/caddy/sites`;
+- the containers Caddy proxies to, attached to the Docker network `edge`
+  under names no other project uses.
+
+Rules:
+
+- **No project puts files into `/opt/auth`.** Not a site block in the
+  Caddyfile (`deploy/sync.sh` overwrites it on every deploy), not a
+  `docker-compose.override.yml` or any other compose file (Docker Compose
+  merges it into every command run there, so `sync.sh` refuses to deploy
+  while one exists), not a volume for Caddy to mount. Settings of this
+  stack, Keycloak's memory limit included, change only in `deploy/` of this
+  repository.
+- Caddy reaches other projects only over `edge` and mounts none of their
+  files, so a project serves its static files from a container of its own.
+- `sync.sh` creates `edge` and `/opt/caddy-sites` when they are missing and
+  never writes into the directory; only the projects' own runbooks do.
+  Nothing removes either of them.
+- Keycloak and Postgres are not on `edge`. A project's backend reaches
+  Keycloak at `https://auth.finance-nl.com`, through the server's public
+  address, like any other client.
+- Every container on `edge` can reach Caddy and every other container on
+  it. Attach only the containers Caddy proxies to, never a database, and
+  only projects of this server's owner. Docker's DNS answers Caddy from its
+  networks in the order of their names, `auth_default` before `edge`, so a
+  container on `edge` that called itself `keycloak` does not get
+  `auth.finance-nl.com`'s traffic (tested 2026-09-27 with such a decoy; with
+  the order reversed, the decoy got it). Never use the names `keycloak`,
+  `postgres` or `caddy` on `edge` all the same.
+- A site file holds only site blocks for the project's own hostnames: no
+  global options block, no `auth.finance-nl.com`, no catch-all address such
+  as `:443` or `https://`. Point the hostname's DNS record at the server
+  before adding the file, because Caddy requests the certificate as soon as
+  it loads the site.
+- A site file Caddy can't read stops Caddy from starting at its next
+  restart (a deploy, a reboot), and `auth.finance-nl.com` goes down with it.
+  A reload refuses such a file and keeps the running configuration, so
+  never leave a file in place after its reload failed.
+
+#### Put a container on `edge`
+
+In the project's own compose file, give each container Caddy proxies to an
+alias on `edge` that starts with the project's name. Finance Tracker's
+`/opt/finance-tracker/deploy/app/docker-compose.yml`:
+
+```yaml
+services:
+  backend:
+    networks:
+      default:
+      edge:
+        aliases: [finance-tracker-backend]
+
+networks:
+  edge:
+    external: true
+```
+
+Compose also gives the container its service name (`backend`) on `edge`,
+which another project may use too, so a site file uses only the alias. Then
+**on the server**:
+
+```bash
+cd /opt/finance-tracker/deploy/app && docker compose up -d
+docker network inspect edge -f '{{range .Containers}}{{.Name}} {{end}}'
+cd /opt/auth && docker compose exec caddy getent ahostsv4 finance-tracker-backend | awk '{print $1}' | sort -u
+```
+
+The second command lists `auth-caddy-1` and
+`finance-tracker-prod-backend-1` among the containers on `edge`. The third
+must print exactly one address: two mean another container uses the name;
+none means the container is not on `edge` or not running.
+
+#### Add or change a site
+
+The site file, `/opt/caddy-sites/finance.caddy` (owner root, mode 644),
+holds complete site blocks for the project's hostnames and proxies to the
+aliases on `edge`. The shape of Finance Tracker's (`finance-tracker-web`
+stands for the app's container that serves the built frontend):
+
+```caddyfile
+# Finance Tracker: https://app.finance-nl.com
+app.finance-nl.com {
+    encode zstd gzip
+
+    # The backend's API, login (its start and Keycloak's callback) and logout.
+    @backend path /api/* /oauth2/* /login/oauth2/* /logout
+    handle @backend {
+        reverse_proxy finance-tracker-backend:8080
+    }
+
+    # Every other path: the single-page app.
+    handle {
+        reverse_proxy finance-tracker-web:8080
+    }
+}
+```
+
+The project's own response headers (HSTS, CSP) belong in the same file.
+Sites imported this way have no access log unless the file adds a `log`
+block like the one in `deploy/Caddyfile`.
+
+**On the server**, copy the file from the project's clone and reload Caddy:
+
+```bash
+install -o root -g root -m 644 /opt/finance-tracker/deploy/caddy/app.finance-nl.com.caddy /opt/caddy-sites/finance.caddy
+cd /opt/auth && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+The same reload applies any later edit of a site file; a restart of Caddy
+is never needed. On success the reload prints two `info` lines (`using
+config from file`, `adapted config to JSON`) and nothing else. On failure
+it prints the file and line, for example `Error: adapting config using
+caddyfile: /etc/caddy/sites/finance.caddy:3: unrecognized directive: …`,
+and Caddy keeps serving the previous configuration. Then fix the file, or
+move it out (`mv /opt/caddy-sites/finance.caddy /root/finance.caddy.rejected`),
+and reload again until it succeeds.
+
+Check the result. **On the server**, Caddy's messages since the reload
+(for a new hostname, a `certificate obtained successfully` line for
+`app.finance-nl.com` within a minute, and no `error` lines):
+
+```bash
+cd /opt/auth && docker compose logs --since 10m caddy | grep -v '"http.log.access' | grep -E 'error|app.finance-nl.com'
+```
+
+**On the laptop**, the site answers and `auth.finance-nl.com` still passes
+the smoke test (`== Summary: 11 ok, 0 fail ==`):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://app.finance-nl.com/
+deploy/smoke-test.sh
+```
+
+#### Remove a site
+
+**On the server**, delete the file and reload:
+
+```bash
+rm /opt/caddy-sites/finance.caddy
+cd /opt/auth && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+If it was the last site file, the reload also logs `No files matching import
+glob pattern`, which is expected. **On the laptop**,
+`curl -s -o /dev/null -w '%{http_code}\n' https://app.finance-nl.com/` now
+prints `000`: Caddy no longer has a certificate for the name. Then remove
+the `edge` entries from the project's compose file and, **on the server**,
+`cd /opt/finance-tracker/deploy/app && docker compose up -d`, and remove the
+DNS record. The old certificate stays in `auth_caddy_data` until it expires;
+Caddy no longer renews it. Leave `edge` and `/opt/caddy-sites` in place.
+
+To switch a site off for a while instead, rename it **on the server**
+(`mv /opt/caddy-sites/finance.caddy /opt/caddy-sites/finance.caddy.off`;
+only `*.caddy` files are read) and reload the same way.
 
 ### Watch registrations and events
 

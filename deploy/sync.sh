@@ -8,6 +8,10 @@
 # edit those on the server. Files it replaces are kept on the server in
 # /root/auth-sync-backups/<UTC timestamp>/. deploy/backup/ is not copied; it is
 # installed with deploy/backup/install.sh.
+# It also creates the Docker network edge and the directory /opt/caddy-sites
+# when they are missing (both shared with other projects; it never writes into
+# the directory), and it stops if another compose file in /opt/auth would be
+# merged into this stack, such as docker-compose.override.yml.
 # Requires: git, rsync, ssh with key access to root on the server.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -16,6 +20,12 @@ SERVER="${SERVER:-root@2.28.108.199}"
 DEST=/opt/auth
 PROTECTED=(.env vault)
 HEALTH_TIMEOUT=300
+EDGE_NETWORK=edge          # shared with other projects; only caddy joins it
+SITES_DIR=/opt/caddy-sites # other projects' Caddy site files, mounted into caddy
+# docker compose reads any of these next to docker-compose.yml without being
+# asked: an override is merged into every command, a compose.y*ml replaces it.
+FOREIGN_COMPOSE=(docker-compose.override.yml docker-compose.override.yaml
+  compose.override.yml compose.override.yaml compose.yml compose.yaml docker-compose.yaml)
 
 dry_run=0; assume_yes=0
 for arg in "$@"; do
@@ -34,6 +44,17 @@ RSYNC=(rsync -rlpt --checksum --chmod=Fgo-w,Dgo-w -e "ssh ${SSH_OPTS[*]}")
 # Tracked files only, minus anything that must stay server-side and backup/.
 files=$(git ls-files . | grep -v '^backup/' | grep -vxF -f <(printf '%s\n' "${PROTECTED[@]}"))
 excludes=(); for p in "${PROTECTED[@]}"; do excludes+=(--exclude="$p"); done
+
+# Other projects never put files into /opt/auth (PRODUCTION.md, "Hosting another
+# project behind this Caddy"); what this stack runs comes from deploy/ only.
+foreign=$(remote "cd $DEST && for f in ${FOREIGN_COMPOSE[*]}; do [ ! -e \$f ] || echo \$f; done" </dev/null)
+if [ -n "$foreign" ]; then
+  echo "❌ $SERVER:$DEST contains ${foreign//$'\n'/ }, which docker compose would use" >&2
+  echo "   in every command there, next to or instead of docker-compose.yml. Settings for" >&2
+  echo "   this stack belong in deploy/docker-compose.yml; another project's sites go in" >&2
+  echo "   $SITES_DIR. Move the file out of $DEST, then run sync.sh again. Nothing was changed." >&2
+  exit 1
+fi
 
 rev=$(git rev-parse --short HEAD)
 if [ -n "$(git status --porcelain -- .)" ]; then
@@ -67,6 +88,15 @@ if [ "$assume_yes" -eq 0 ]; then
   read -r -p "Deploy to $SERVER:$DEST and run docker compose up -d? [y/N] " answer
   [[ "$answer" =~ ^[yY]$ ]] || { echo "Aborted."; exit 1; }
 fi
+
+# Both outlive this stack and are shared with other projects, so they are only
+# ever created here, never changed or removed.
+echo "== Network $EDGE_NETWORK and directory $SITES_DIR (created when missing)"
+remote "set -e
+  if docker network inspect $EDGE_NETWORK >/dev/null 2>&1; then echo 'network $EDGE_NETWORK exists'
+  else docker network create $EDGE_NETWORK >/dev/null; echo 'network $EDGE_NETWORK created'; fi
+  if [ -d $SITES_DIR ]; then echo '$SITES_DIR exists'
+  else install -d -o root -g root -m 755 $SITES_DIR; echo '$SITES_DIR created'; fi" </dev/null
 
 ts=$(date -u +%Y%m%dT%H%M%SZ)
 echo "== Copying (replaced files go to /root/auth-sync-backups/$ts/)"

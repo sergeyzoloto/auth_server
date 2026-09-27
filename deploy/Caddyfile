@@ -52,3 +52,11 @@ http://{$KC_DOMAIN} {
 		reverse_proxy keycloak:8080
 	}
 }
+
+# Sites of other projects on this server: every /opt/caddy-sites/*.caddy on the
+# host, mounted read-only. Each file holds complete site blocks for its own
+# hostnames only, and they reach their containers over the network edge
+# (PRODUCTION.md, "Hosting another project behind this Caddy"). Everything
+# above, including the admin allowlist, belongs to {$KC_DOMAIN} alone. With no
+# files Caddy logs a warning and starts anyway.
+import /etc/caddy/sites/*.caddy

@@ -17,7 +17,7 @@ keycloak-auth-server/
 ├── realm-export.json          # dev realm, clients, roles, one test user — imported on first boot (dev only)
 ├── deploy/                    # production: Keycloak + Postgres + Caddy — see PRODUCTION.md
 │   ├── docker-compose.yml
-│   ├── Caddyfile              # TLS, admin IP allowlist, access log
+│   ├── Caddyfile              # TLS, admin IP allowlist, access log; imports other projects' sites
 │   ├── .env.example           # template for /opt/auth/.env on the server
 │   ├── sync.sh                # deploys deploy/ to the server
 │   ├── smoke-test.sh          # checks production from the laptop (client smoke-test, no users)
