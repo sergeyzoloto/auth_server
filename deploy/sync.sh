@@ -11,8 +11,10 @@
 # It also creates the Docker network edge and the directory /opt/caddy-sites
 # when they are missing (both shared with other projects; it never writes into
 # the directory), and it stops if another compose file in /opt/auth would be
-# merged into this stack, such as docker-compose.override.yml.
-# Requires: git, rsync, ssh with key access to root on the server.
+# merged into this stack, such as docker-compose.override.yml. Before copying,
+# it validates the new Caddyfile together with the site files in
+# /opt/caddy-sites. It installs deploy/caddy-site.sh as /usr/local/sbin/caddy-site.
+# Requires: git, rsync, ssh with key access to root on the server (with python3).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -76,12 +78,46 @@ else
   done <<<"$changes"
 fi
 
-# The new compose file must resolve against the server's .env before anything is copied.
+# The new docker-compose.yml and Caddyfile are checked in a temporary directory
+# on the server before anything is copied.
+check_dir=$(remote "mktemp -d /tmp/auth-sync-check.XXXXXX" </dev/null)
+trap 'remote "rm -rf $check_dir" </dev/null || true' EXIT
+tar -cf - docker-compose.yml Caddyfile | remote "tar -xf - -C $check_dir"
+
 echo "== Checking docker-compose.yml against the server's .env"
-remote "tmp=\$(mktemp -d) && cat > \"\$tmp/docker-compose.yml\" && \
-  docker compose --project-directory $DEST -f \"\$tmp/docker-compose.yml\" config --quiet; \
-  rc=\$?; rm -rf \"\$tmp\"; exit \$rc" < docker-compose.yml
+remote "docker compose --project-directory $DEST -f $check_dir/docker-compose.yml config --quiet" </dev/null
 echo "OK"
+
+# Caddy imports every site file in $SITES_DIR, and one it can't read stops it
+# from starting. Validated with the image and environment that the new compose
+# file gives the caddy service, in a throwaway container without network.
+echo "== Validating the Caddyfile with the site files in $SITES_DIR"
+if ! remote "bash -s -- $DEST $check_dir $SITES_DIR" <<'EOF'
+set -euo pipefail
+dest=$1 dir=$2 sites=$3
+docker compose --project-directory "$dest" -f "$dir/docker-compose.yml" config --format json \
+  | python3 -c '
+import json, sys
+caddy = json.load(sys.stdin)["services"]["caddy"]
+with open(sys.argv[1], "w") as env:
+    for key, value in (caddy.get("environment") or {}).items():
+        env.write((key if value is None else f"{key}={value}") + "\n")
+print(caddy["image"])' "$dir/caddy.env" > "$dir/image"
+[ -d "$sites" ] || { sites=$dir/no-sites; mkdir "$sites"; }   # before the first deploy
+if out=$(docker run --rm --network none --env-file "$dir/caddy.env" \
+    -v "$dir/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$sites:/etc/caddy/sites:ro" \
+    "$(cat "$dir/image")" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); then
+  rc=0
+else
+  rc=$?
+fi
+grep -v '"level":"info"' <<<"$out" || true
+exit $rc
+EOF
+then
+  echo "❌ Caddy would not start with this Caddyfile and the site files in $SITES_DIR. Nothing was changed." >&2
+  exit 1
+fi
 
 [ "$dry_run" -eq 1 ] && exit 0
 if [ "$assume_yes" -eq 0 ]; then
@@ -103,9 +139,20 @@ echo "== Copying (replaced files go to /root/auth-sync-backups/$ts/)"
 "${RSYNC[@]}" --itemize-changes --backup --backup-dir="/root/auth-sync-backups/$ts" \
   "${excludes[@]}" --files-from=<(echo "$files") ./ "$SERVER:$DEST/"
 remote "echo '$rev $ts' > $DEST/.deployed-revision"
+remote "install -o root -g root -m 755 $DEST/caddy-site.sh /usr/local/sbin/caddy-site" </dev/null
+echo "Installed /usr/local/sbin/caddy-site"
 
 echo "== docker compose up -d"
 remote "cd $DEST && docker compose up -d"
+
+# caddy mounts the Caddyfile as a single file, and rsync replaces a file by
+# renaming a new one over it, so a running caddy keeps the old one (a reload
+# too) until it restarts. The new one passed the validation above.
+remote "cd $DEST && if docker compose exec -T caddy cat /etc/caddy/Caddyfile | cmp -s - Caddyfile; then
+    echo 'caddy runs the current Caddyfile'
+  else
+    echo '== caddy has an older Caddyfile: restarting it'; docker compose restart --no-deps caddy
+  fi" </dev/null
 
 echo "== Waiting until every container is running and healthy (up to ${HEALTH_TIMEOUT}s)"
 deadline=$((SECONDS + HEALTH_TIMEOUT))

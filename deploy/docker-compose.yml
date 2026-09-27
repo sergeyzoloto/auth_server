@@ -60,6 +60,13 @@ services:
       # /opt/auth/vault on the server: owner uid 1000 (the container's keycloak
       # user), directory 0500, files 0400. Not in git; sync.sh never touches it.
       - ./vault:/opt/keycloak/vault:ro
+    networks:
+      default:
+        # Caddy's upstream name (Caddyfile), on this stack's own network only.
+        # Not the bare service name: a container on edge could claim keycloak.
+        # The prefix auth- is reserved for this stack (PRODUCTION.md, "Hosting
+        # another project behind this Caddy").
+        aliases: [auth-keycloak]
     ports:
       - "127.0.0.1:9000:9000"            # health check only from the server's localhost
     # The image has no curl or wget, so bash's /dev/tcp asks the management port.

@@ -20,6 +20,7 @@ keycloak-auth-server/
 │   ├── Caddyfile              # TLS, admin IP allowlist, access log; imports other projects' sites
 │   ├── .env.example           # template for /opt/auth/.env on the server
 │   ├── sync.sh                # deploys deploy/ to the server
+│   ├── caddy-site.sh          # installs or removes another project's Caddy site file (validated), on the server
 │   ├── smoke-test.sh          # checks production from the laptop (client smoke-test, no users)
 │   └── backup/                # nightly pg_dump, restore test, pull to the laptop (install.sh)
 └── spring-client-example/

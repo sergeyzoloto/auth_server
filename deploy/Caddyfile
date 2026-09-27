@@ -35,6 +35,9 @@ http://{$KC_DOMAIN} {
 		-Via
 	}
 
+	# auth-keycloak is Keycloak's alias on this stack's network only
+	# (docker-compose.yml); Caddy is also on edge, where other projects' names live.
+
 	# Admin console, admin REST API and the master realm: only from ADMIN_ALLOWED_IPS.
 	# remote_ip is the TCP peer, not X-Forwarded-For. Never add private ranges:
 	# IPv6 clients arrive through docker-proxy as 172.18.0.1 (IPv4-only network),
@@ -43,13 +46,13 @@ http://{$KC_DOMAIN} {
 	handle @admin {
 		@allowed remote_ip {$ADMIN_ALLOWED_IPS}
 		handle @allowed {
-			reverse_proxy keycloak:8080
+			reverse_proxy auth-keycloak:8080
 		}
 		respond 403
 	}
 
 	handle {
-		reverse_proxy keycloak:8080
+		reverse_proxy auth-keycloak:8080
 	}
 }
 
@@ -58,5 +61,6 @@ http://{$KC_DOMAIN} {
 # hostnames only, and they reach their containers over the network edge
 # (PRODUCTION.md, "Hosting another project behind this Caddy"). Everything
 # above, including the admin allowlist, belongs to {$KC_DOMAIN} alone. With no
-# files Caddy logs a warning and starts anyway.
+# files Caddy logs a warning and starts anyway. Files get here only through
+# caddy-site install (deploy/caddy-site.sh), which validates them first.
 import /etc/caddy/sites/*.caddy
