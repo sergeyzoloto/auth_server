@@ -1,5 +1,54 @@
 # Caddy automatically obtains and renews a Let's Encrypt certificate for the domain,
 # redirects HTTP -> HTTPS, and sets X-Forwarded-For/Proto/Host.
+# KC_DOMAIN and ADMIN_ALLOWED_IPS come from the caddy service's environment (.env).
+
+# Port 80 only redirects to HTTPS. It is declared explicitly so that the Server
+# header can be removed here too; Caddy still answers ACME HTTP challenges first.
+http://{$KC_DOMAIN} {
+	header -Server
+	redir https://{host}{uri} 308
+}
+
 {$KC_DOMAIN} {
-	reverse_proxy keycloak:8080
+	# JSON access log on stdout (docker compose logs caddy). Caddy already
+	# redacts cookies and Authorization; these filters drop the two tokens
+	# Keycloak puts into URLs.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace id_token_hint REDACTED
+				}
+				resp_headers>Location query {
+					replace code REDACTED
+				}
+			}
+		}
+	}
+
+	# Deleting headers is deferred until the response is written, so this also
+	# covers proxied responses (where Caddy adds Via) and the 403 below.
+	header {
+		-Server
+		-Via
+	}
+
+	# Admin console, admin REST API and the master realm: only from ADMIN_ALLOWED_IPS.
+	# remote_ip is the TCP peer, not X-Forwarded-For. Never add private ranges:
+	# IPv6 clients arrive through docker-proxy as 172.18.0.1 (IPv4-only network),
+	# so a private range would let every IPv6 client in.
+	@admin path /admin* /realms/master*
+	handle @admin {
+		@allowed remote_ip {$ADMIN_ALLOWED_IPS}
+		handle @allowed {
+			reverse_proxy keycloak:8080
+		}
+		respond 403
+	}
+
+	handle {
+		reverse_proxy keycloak:8080
+	}
 }

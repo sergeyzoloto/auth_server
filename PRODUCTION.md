@@ -1,315 +1,257 @@
-# Production deployment
+# Production
 
-The production stack is two containers on one host — Keycloak and Caddy —
-with the database outside it, in managed Postgres (Supabase below, but any
-Postgres works). The dev stack (`docker-compose.yml`, `realm-export.json`) stays
-for local work; never deploy it: it has a test user and fixed client secrets.
+One Hetzner Cloud VPS runs the whole stack from [`deploy/`](deploy/):
+Keycloak, Postgres and Caddy under Docker Compose, in `/opt/auth`.
 
-| Where            | What it holds                                      | If it's lost                          |
-|------------------|----------------------------------------------------|---------------------------------------|
-| Host: `keycloak` | nothing                                            | recreate the container                |
-| Host: `caddy`    | TLS certificates                                   | re-issued automatically               |
-| Managed Postgres | users, sessions, clients, signing keys, events     | everything — this is what you back up |
+- Public URL: `https://auth.finance-nl.com`, realm `myapps`
+- Server: `2.28.108.199` (Ubuntu 26.04, 2 vCPU, 3.7 GiB RAM + 2 GB swap),
+  SSH as `root` with a key only
+- Versions: Keycloak 26.7.4, Postgres 16.15, Caddy 2.11.4
 
-## Prerequisites
-- A Linux host with Docker 27+ and Compose v2, ports 80 and 443 open to the
-  internet, at least 2 vCPU / 4 GB RAM (Keycloak is capped at 2 GB). IPv6 on
-  the host is recommended: it allows the direct database connection below.
-- A DNS record for the auth hostname (e.g. `auth.example.com`) pointing at
-  the host.
-- A Supabase project on a paid plan, in a region close to the host. Every
-  login makes several database round-trips, and the Free plan has no
-  automatic backups — not acceptable for the database behind every login.
-- An SMTP provider for password-reset email (Brevo below, but any provider
-  works), with your mail domain authenticated there (DKIM and DMARC records
-  in DNS) and a verified sender such as `no-reply@<mail domain>`. The host
-  must be able to reach the provider on port 587; some hosting providers
-  block outgoing SMTP until you ask them to unblock it:
-  ```bash
-  timeout 5 bash -c 'exec 3<>/dev/tcp/smtp-relay.brevo.com/587' && echo ok
-  ```
+The dev stack in the repository root (`docker-compose.yml`,
+`realm-export.json`) is for local work only. It has a test user and fixed
+secrets, so never deploy it.
 
-## 1. Prepare the database
-1. Supabase SQL Editor:
-   ```sql
-   create schema keycloak;
-   ```
-   Keycloak creates its tables but not the schema. Don't use `public`: on
-   Supabase it's exposed through the Data API. Don't add `keycloak` to
-   *API settings → Exposed schemas* either.
-2. Open *Connect* and pick the connection:
-   - **Direct connection** (preferred): host `db.<project-ref>.supabase.co`,
-     user `postgres`. Nothing sits between Keycloak and the database, but the
-     address is IPv6-only, so the host needs working IPv6. Check on the host:
-     ```bash
-     timeout 5 bash -c 'exec 3<>/dev/tcp/db.<project-ref>.supabase.co/5432' && echo ok
-     ```
-     The compose network is dual-stack, so containers use the host's IPv6.
-   - **Session pooler**, if that check fails: host
-     `aws-<n>-<region>.pooler.supabase.com`, port 5432, user
-     `postgres.<project-ref>`. It is reachable over IPv4.
+| Where (on the server)                 | What it holds                                          | If it's lost                                    |
+|---------------------------------------|--------------------------------------------------------|-------------------------------------------------|
+| Docker volume `auth_keycloak_pg_data` | users, sessions, realm and client config, signing keys | everything; see "Not covered yet" about backups |
+| Docker volume `auth_caddy_data`       | TLS certificates, ACME account                         | re-issued automatically                         |
+| `/opt/auth/.env`                      | domain, database password, admin allowlist             | recreate by hand from `deploy/.env.example`     |
+| `/opt/auth/realm-export.json`         | realm file imported once, at the very first start      | not needed while the database exists            |
 
-   Never the Transaction pooler (port 6543): Keycloak keeps its own
-   connection pool and relies on prepared statements.
+`.env` and `realm-export.json` contain secrets. They exist only on the server
+(and in gitignored copies on the laptop), and `deploy/sync.sh` never copies
+or overwrites them. The server's `/opt/auth/.env` is the one that counts.
 
-## 2. Configure
-```bash
-cp .env.example .env && chmod 600 .env
-```
-Fill in every value; `.env.example` explains each one. Generate passwords with
-`openssl rand -base64 24`.
+## What is in place
 
-Then edit `realm-prod.json`: rename the three example clients to your
-projects and replace the `example.com` URLs in `redirectUris` and
-`post.logout.redirect.uris` with your apps' real ones. This must print
-nothing:
-```bash
-grep -n example.com realm-prod.json
-```
-The realm file is read once, on the very first start. From then on the
-database is the source of truth: change clients, roles and settings in the
-admin console or through the Admin REST API. Editing the file and
-restarting does nothing.
+### Edge (Caddy)
 
-## 3. Start
-```bash
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml logs -f keycloak
-```
-The first start creates about 100 tables over the network, so give it a few
-minutes. Wait for `Realm 'myapps' imported` and `started in`. Caddy starts
-once Keycloak is healthy and fetches the Let's Encrypt certificate.
+- Only Caddy publishes ports: 80/tcp, 443/tcp and 443/udp (HTTP/3). Postgres
+  publishes nothing. Keycloak's management port 9000 (health) is bound to
+  `127.0.0.1` on the server. Health and metrics are not reachable through 443.
+- Let's Encrypt certificate, obtained and renewed by Caddy; HTTP redirects to
+  HTTPS with 308.
+- `/admin*` and `/realms/master*` (admin console, admin REST API, master
+  realm) are proxied only for addresses in `ADMIN_ALLOWED_IPS`; everyone else
+  gets 403. Caddy checks the TCP peer address, not `X-Forwarded-For`.
+- The `Server` and `Via` response headers are removed. Keycloak sets HSTS,
+  `X-Frame-Options`, CSP `frame-ancestors`, `X-Content-Type-Options` and
+  `Referrer-Policy`.
+- JSON access log on Caddy's stdout (`docker compose logs caddy`). Caddy
+  redacts cookies and `Authorization`; the Caddyfile also redacts
+  `id_token_hint` in logout URLs and the authorization `code` in redirects.
+  Only HTTPS requests are logged, not the port-80 redirects.
+- **IPv6:** the compose network is IPv4-only, so every client that connects
+  over IPv6 reaches Caddy through docker-proxy as the Docker gateway
+  `172.18.0.1`. Such clients never pass the admin allowlist (reach the admin
+  console over IPv4), and Keycloak sees `172.18.0.1` as their address. There
+  is no AAAA record, so normal clients use IPv4. Never put a private range in
+  `ADMIN_ALLOWED_IPS`: it would admit every IPv6 client.
 
-## 4. Replace the temporary admin
-From an address in `ADMIN_ALLOWED_IPS`, open `https://<AUTH_HOSTNAME>/admin/`
-and sign in with the temporary admin from `.env`. Then:
-1. In the **master** realm, create a permanent admin user, give it the
-   `admin` realm role, and add the *Configure OTP* required action.
-2. Sign in as that user (enrolling OTP), then delete the temporary admin.
+### Containers ([`deploy/docker-compose.yml`](deploy/docker-compose.yml))
 
-From now on the `KC_BOOTSTRAP_ADMIN_*` values are ignored, but leave them in
-`.env`: Keycloak refuses to start when they're present but empty, and compose
-refuses to start when they're missing.
+- Images pinned to an exact version and digest.
+- Healthchecks: Postgres with `pg_isready`, Keycloak with
+  `http://localhost:9000/health/ready`. `docker compose up` starts Postgres,
+  then Keycloak once Postgres is healthy, then Caddy once Keycloak is healthy.
+  After a reboot, Docker's restart policy (`unless-stopped`) starts all three
+  at once; the reboot on 2026-09-27 came back healthy with no restarts.
+- Keycloak `mem_limit: 1g` (it used about 620 MiB without a limit; the JVM
+  heap is 70% of the limit).
+- Log rotation for every container: `json-file`, 10 MB × 5 files.
+- Compose project name fixed to `auth`, so the volumes stay `auth_*`
+  whatever the directory is called.
 
-## 5. Set up email
-Keycloak sends password-reset (and, optionally, email-verification) mail
-through the SMTP provider. This is a manual step: the SMTP password must stay
-out of git, so it isn't in `realm-prod.json`. For the same reason the realm
-file keeps `resetPasswordAllowed: false` — on a fresh install without SMTP,
-the *Forgot password?* link would lead nowhere.
+### Host
 
-1. At the provider, create an SMTP key for Keycloak. On Brevo: *Settings →
-   SMTP & API → SMTP → Generate a new SMTP key*. It starts with `xsmtpsib-`
-   (an `xkeysib-` key is an API key and won't work for SMTP), and it's shown
-   only once. Note the **Login** on the same tab too: it can differ from the
-   account email.
-2. In the **master** realm, give your admin user an email address you read.
-   *Test connection* below sends its test mail there.
-3. In the **myapps** realm, open *Realm settings → Email*:
-
-   | Field | Value |
-   | --- | --- |
-   | From | the verified sender, e.g. `no-reply@<mail domain>` |
-   | From display name | your product name |
-   | Envelope from | empty (the provider sets the return path) |
-   | Host / Port | `smtp-relay.brevo.com` / `587` |
-   | Encryption | *Enable StartTLS* on, *Enable SSL* off |
-   | Authentication | on. Username: the provider's *Login*. Password: the SMTP key |
-
-   *Save*, then *Test connection*.
-4. Still in `myapps`, open *Realm settings → Login* and turn on
-   **Forgot password**.
-5. **Verify email** is optional. Once it's on, every user with *Email
-   verified* off must verify at their next login. See who that affects
-   first:
-   ```sql
-   select u.username, u.email
-   from keycloak.user_entity u join keycloak.realm r on r.id = u.realm_id
-   where r.name = 'myapps' and u.service_account_client_link is null and not u.email_verified;
-   ```
-
-Configure SMTP only in `myapps`. `master` holds only admins, who use OTP and
-don't need a password-reset link.
-
-## 6. Connect the projects
-Client secrets aren't in any file — Keycloak generated them during import.
-Each project needs:
-- **Issuer URL**: `https://<AUTH_HOSTNAME>/realms/myapps`
-- **Client ID**: its client from `realm-prod.json`
-- **Client secret**: *Clients → <client> → Credentials*
-
-Services validate tokens against the public issuer URL, including services on
-the same host: the `iss` claim is always the public hostname.
-
-How apps get tokens:
-- **Users log in** with the authorization code flow (redirect to the login
-  page). The password grant used in the README's curl example is disabled here.
-- **Services call each other** with client credentials:
-  ```bash
-  curl -s -X POST https://<AUTH_HOSTNAME>/realms/myapps/protocol/openid-connect/token \
-    -d grant_type=client_credentials -d client_id=shop-api -d client_secret=<secret>
-  ```
-
-## 7. Verify
-```bash
-H=https://<AUTH_HOSTNAME>
-curl -s $H/realms/myapps/.well-known/openid-configuration | jq -r .issuer   # https://<AUTH_HOSTNAME>/realms/myapps
-curl -s -o /dev/null -w '%{http_code}\n' $H/admin/                          # 404 from outside ADMIN_ALLOWED_IPS
-```
-Plus the client-credentials call above, which should return an `access_token`.
-
-### Check that data reaches the database
-Run these read-only queries in the Supabase SQL Editor before and after the
-test below.
-
-```sql
--- 1. Per realm: people (service accounts excluded), active sessions, stored events
-select r.name as realm,
-  (select count(*) from keycloak.user_entity u
-    where u.realm_id = r.id and u.service_account_client_link is null) as users,
-  (select count(*) from keycloak.offline_user_session s
-    where s.realm_id = r.id and s.offline_flag = '0') as active_sessions,
-  (select count(*) from keycloak.event_entity e where e.realm_id = r.id) as events
-from keycloak.realm r
-order by r.name;
-```
-
-```sql
--- 2. Users in myapps and their active sessions
-select u.username, u.email,
-       to_timestamp(u.created_timestamp / 1000.0) as created,
-       count(s.user_session_id) as active_sessions,
-       to_timestamp(max(s.last_session_refresh)) as last_seen
-from keycloak.user_entity u
-join keycloak.realm r on r.id = u.realm_id
-left join keycloak.offline_user_session s
-       on s.user_id = u.id and s.offline_flag = '0'
-where r.name = 'myapps' and u.service_account_client_link is null
-group by u.id
-order by u.created_timestamp desc;
-```
-
-```sql
--- 3. Latest login events in myapps
-select to_timestamp(e.event_time / 1000.0) as at, e.type, e.client_id,
-       u.username, e.ip_address, e.error
-from keycloak.event_entity e
-join keycloak.realm r on r.id = e.realm_id
-left join keycloak.user_entity u on u.id = e.user_id
-where r.name = 'myapps'
-order by e.event_time desc
-limit 20;
-```
-
-1. In the admin console, open realm `myapps` → *Users → Add user*. Fill in
-   email, first and last name, or the first login asks the user to complete
-   the profile. Under *Credentials*, set a password of 12+ characters with
-   *Temporary* off. **Query 2** now lists the user.
-2. In a private browser window, sign in as that user at
-   `https://<AUTH_HOSTNAME>/realms/myapps/account`. **Query 1** shows one
-   more session and event; **query 3** shows `LOGIN` from `account-console`.
-3. In another private window, try a wrong password. **Query 3** shows
-   `LOGIN_ERROR` with `invalid_user_credentials`.
-4. Recreate Keycloak:
-   `docker compose -f docker-compose.prod.yml up -d --force-recreate keycloak`.
-   The user and the session from step 2 survive. The new container holds
-   nothing locally, so both came from the database.
-5. In a private window, open the account page again, click *Forgot
-   Password?* and enter the user's email (use a mailbox you can read in
-   step 1). The mail arrives in the inbox, not spam; in Gmail, *Show
-   original* shows DKIM `PASS` with `d=<mail domain>` and DMARC `PASS`.
-   SPF passes for the provider's own envelope domain, not yours — that's
-   expected, and DMARC aligns through DKIM. The reset link works for 5
-   minutes (*Realm settings → Tokens*).
-   **Query 3** shows `SEND_RESET_PASSWORD`.
-6. Delete the user. **Query 2** is empty and the session is gone. Its events
-   stay, with an empty username, until they expire after 30 days.
-
-Reading the results:
-- `user_entity` also holds `service-account-<client>` rows. These are the
-  clients' own identities for client credentials, not people; the queries
-  leave them out.
-- Sessions in `master` are admin console sign-ins. `master` stores no
-  events; only `myapps` has them enabled.
-- `ip_address` is the client address Caddy saw. Requests from the host
-  itself (e.g. through `localhost`) show the Docker gateway.
-- Supabase shows the times in UTC.
-- Read these tables freely, but never edit them: Keycloak caches realms,
-  clients and users in memory and won't notice direct changes. Make changes
-  in the admin console or through the Admin REST API.
-
-## What the setup enforces
-- **Exposed paths**: `/realms/*`, `/resources/*`, `/.well-known/*` and
-  `/robots.txt`. The admin console (`/admin`) and the `master` realm are
-  reachable only from `ADMIN_ALLOWED_IPS`. Everything else, including health
-  and metrics, returns 404.
-- **Keycloak isn't published directly**: only Caddy listens on the host, so
-  the `X-Forwarded-*` headers Keycloak trusts always come from Caddy.
-- **Real client addresses**: the compose network is dual-stack. On an
-  IPv4-only Docker network, every client connecting over IPv6 reaches Caddy
-  as the Docker gateway (`172.x.0.1`). That silently breaks
-  `ADMIN_ALLOWED_IPS`, and the addresses in Keycloak's login events.
-- **Realm**: brute-force lockout after 10 failed logins (waits growing up to
-  15 min), passwords of at least 12 characters that differ from the username
-  and email, self-registration off, login events kept for 30 days. Password
-  reset stays off until you turn it on in step 5.
-- **Clients**: authorization code and client credentials only; redirects are
-  accepted only to the listed URLs.
-- **Operations**: container logs are rotated (5 × 10 MB); a healthcheck
-  gates Caddy on Keycloak being ready.
-
-## Operations
-- **Upgrade Keycloak**: bump `KEYCLOAK_VERSION` in the `Dockerfile`, then
-  `docker compose -f docker-compose.prod.yml up -d --build`. Take a database
-  backup first: Keycloak migrates the schema on start and can't migrate back.
-- **Rotate a client secret**: *Clients → <client> → Credentials →
-  Regenerate*, then update that project.
-- **Rotate the SMTP key**: generate a new one at the provider, paste it into
-  *Realm settings → Email* in `myapps`, *Test connection*, then delete the
-  old key at the provider.
-- **Backups**: Supabase Pro keeps daily backups for 7 days; point-in-time
-  recovery is an add-on (needs at least the Small compute size). Test a
-  restore before you depend on it.
-- **Move to another host**: copy the repository and `.env`, run
-  `up -d --build`, repoint DNS. There's nothing else to migrate.
-
-## Troubleshooting
-- `read and write permissions for the 'keycloak.databasechangelog' table`:
-  the `keycloak` schema doesn't exist (step 1).
-- `password authentication failed`: the username is `postgres` for the
-  direct connection but `postgres.<project-ref>` for the Session pooler. If
-  the password contains `$`, wrap it in single quotes in `.env`.
-- **Timeouts or `Network is unreachable` to `db.<project-ref>.supabase.co`**:
-  the host has no working IPv6. Use the Session pooler.
-- **Admin console returns 404 from an allowed address**: the browser connects
-  over the other IP version. Most often only the IPv4 address is listed
-  while the browser uses IPv6. Check `curl -4 ifconfig.me` and
-  `curl -6 ifconfig.me`, and list both.
-- **No certificate**: Let's Encrypt validates over ports 80/443, so the DNS
-  record must already point at this host and both ports must be open.
-- **No email arrives**: check
-  `docker compose -f docker-compose.prod.yml logs keycloak | grep -iE 'mail|smtp'`.
-  - `535` authentication failed: the username isn't the provider's *Login*,
-    or an API key was used instead of the SMTP key.
-  - Sender rejected or not verified: *From* isn't the sender verified at the
-    provider.
-  - Timeout: port 587 is blocked (see *Prerequisites*), or *Enable SSL* is on
-    instead of *StartTLS*.
-  - *SMTP account not activated* (Brevo): new accounts wait for activation,
-    up to 48 hours; if it takes longer, fill in the company profile and ask
-    support.
+- SSH: public key only, `PermitRootLogin prohibit-password`, no X11
+  forwarding (`/etc/ssh/sshd_config.d/00-hardening.conf`).
+- fail2ban `sshd` jail (`/etc/fail2ban/jail.d/sshd.local`, package defaults
+  otherwise): 5 failures within 10 minutes → 10-minute ban (nftables). The
+  admin laptop's address is in `ignoreip`.
+- ufw: incoming denied except 22/tcp, 80/tcp, 443/tcp and 443/udp; outgoing
+  allowed. **Docker-published ports bypass ufw**: Docker's own iptables rules
+  forward them to containers before ufw's rules are consulted. That is
+  acceptable here because only Caddy publishes ports (80/443). Any port
+  published later with `ports:` is public regardless of ufw, unless it is
+  bound to `127.0.0.1` like port 9000.
+- Hetzner Cloud Firewall in front of the server: inbound TCP 22, 80, 443 and
+  UDP 443.
+- Swap: 2 GB `/swapfile` (in `/etc/fstab`), `vm.swappiness=10`
+  (`/etc/sysctl.d/99-swappiness.conf`).
+- unattended-upgrades installs Ubuntu security updates daily and reboots at
+  04:00 UTC when an update needs it
+  (`/etc/apt/apt.conf.d/52unattended-upgrades-local`). It does not cover the
+  Docker packages from `download.docker.com`; see the monthly routine below.
 
 ## Not covered yet
-- **High availability**: this is one Keycloak instance. If the host goes
-  down, new logins and token refreshes stop for every project. Access tokens
-  already issued keep working until they expire (5 minutes), because services
-  validate them locally with cached keys. Two or more instances need to reach
-  each other on the JGroups port (7800) — a separate setup.
-- **Verifying the database certificate**: `sslmode=require` encrypts the
-  connection but doesn't check the server's identity. To check it, download
-  the CA certificate from Supabase (*Database settings → SSL Configuration*),
-  mount it into the Keycloak service
-  (`- ./db-ca.crt:/opt/keycloak/conf/db-ca.crt:ro`), and set
-  `DB_JDBC_PARAMS=sslmode=verify-full&sslrootcert=/opt/keycloak/conf/db-ca.crt`.
-- **Monitoring**: metrics are enabled on the management port (9000) inside
-  the compose network, but nothing collects them yet.
+
+- **Backups.** The database exists only in the `auth_keycloak_pg_data` volume
+  on this one server. The one-off dump from 2026-09-27 (below) sits on the
+  same server.
+- Stored login and admin events, monitoring and alerting.
+- High availability: one Keycloak instance. If the server is down, logins and
+  token refreshes stop; already issued access tokens keep working until they
+  expire (5 minutes).
+- Dual-stack networking (see IPv6 above).
+
+## First admin on an empty database
+
+The compose file sets no bootstrap admin. On an empty database (a new
+server), create a temporary admin once, sign in, create a permanent admin
+with OTP, then delete the temporary one. On the server (not tested on this
+server yet; see Keycloak's guide "Bootstrapping and recovering an admin
+account"):
+
+```bash
+cd /opt/auth
+docker compose stop keycloak
+docker compose run --rm keycloak bootstrap-admin user   # asks for a username and password
+docker compose up -d
+```
+
+## Runbook
+
+Commands marked **on the laptop** run in `~/dev/auth_server`. Commands marked
+**on the server** run after `ssh root@2.28.108.199`.
+
+### Deploy a change
+
+Edit files in `deploy/`, commit, then **on the laptop**:
+
+```bash
+deploy/sync.sh --dry-run   # which files would change, with diffs; checks the compose file against the server's .env
+deploy/sync.sh             # the same, asks, copies, runs docker compose up -d, waits until healthy
+```
+
+`sync.sh` copies the git-tracked files of `deploy/` to `/opt/auth`, never
+`.env` or `realm-export.json`. It warns when `deploy/` has uncommitted
+changes. The deployed revision is in `/opt/auth/.deployed-revision`, and the
+files it replaced are in `/root/auth-sync-backups/`, one directory per deploy
+named by UTC time. To undo the most recent deploy, **on the server**:
+
+```bash
+last=$(ls -1 /root/auth-sync-backups | tail -1)
+cp /root/auth-sync-backups/$last/* /opt/auth/
+cd /opt/auth && docker compose up -d
+```
+
+The first directory, `/root/auth-sync-backups/20260927T121134Z`, holds the
+setup from before stage 2. It also needs the variables that were removed
+from `.env` then; they are in `/root/auth-config-2026-09-27/.env`.
+
+### Change the admin IP
+
+The admin console only works from addresses in `ADMIN_ALLOWED_IPS`. Find the
+laptop's public IPv4 address **on the laptop**:
+
+```bash
+curl -4 -s https://checkip.amazonaws.com
+```
+
+**On the server**, edit `ADMIN_ALLOWED_IPS` in `/opt/auth/.env` (one or more
+IPv4 addresses or CIDRs separated by spaces, e.g.
+`ADMIN_ALLOWED_IPS=198.51.100.20/32`), then recreate Caddy and check the
+value it sees:
+
+```bash
+nano /opt/auth/.env
+cd /opt/auth && docker compose up -d --force-recreate --no-deps caddy
+cd /opt/auth && docker compose exec caddy printenv ADMIN_ALLOWED_IPS
+```
+
+Also update the address in `ignoreip` in `/etc/fail2ban/jail.d/sshd.local`,
+then `systemctl reload fail2ban`. A wrong address only locks out the admin
+console, never SSH.
+
+### View logs
+
+**On the server**:
+
+```bash
+cd /opt/auth
+docker compose ps                          # state and health
+docker compose logs --tail 200 keycloak
+docker compose logs --since 1h postgres
+docker compose logs -f caddy               # JSON access log plus Caddy's own messages
+fail2ban-client status sshd                # failed SSH logins and current bans
+journalctl -u ssh --since today
+```
+
+The server has no `jq`. To read the access log **on the laptop**:
+
+```bash
+ssh root@2.28.108.199 'cd /opt/auth && docker compose logs --no-log-prefix caddy' \
+  | grep '"http.log.access' | jq -c '{ip: .request.remote_ip, method: .request.method, uri: .request.uri, status}'
+```
+
+### Run the smoke test
+
+**On the laptop** (reads the gitignored `deploy/smoke.env`):
+
+```bash
+deploy/smoke-test.sh
+```
+
+Expected last line: `== Summary: 11 ok, 0 fail ==`.
+
+### Restart the stack
+
+**On the server**:
+
+```bash
+cd /opt/auth
+docker compose restart keycloak   # one service
+docker compose restart            # the whole stack
+docker compose up -d              # after editing .env: recreates what changed
+```
+
+Never run `docker compose down -v`, `docker volume rm` or
+`docker system prune --volumes`: they delete the database and the
+certificates.
+
+### Monthly update routine (Docker packages)
+
+unattended-upgrades skips `docker-ce`, `docker-ce-cli`, `containerd.io`,
+`docker-compose-plugin` and `docker-buildx-plugin`. Once a month, **on the
+server**:
+
+```bash
+DEBIAN_FRONTEND=noninteractive apt-get update
+apt list --upgradable
+DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold upgrade
+cd /opt/auth && docker compose ps
+test -e /var/run/reboot-required && echo "reboot needed"
+```
+
+An upgrade of `docker-ce` restarts the Docker daemon and with it the
+containers (about a minute without logins). If a reboot is needed, run
+`reboot` or leave it to the 04:00 automatic reboot. Afterwards, **on the
+laptop**: `deploy/smoke-test.sh`.
+
+Keycloak, Postgres and Caddy versions change only when the image lines in
+`deploy/docker-compose.yml` are edited. For an upgrade, take a dump first
+(Keycloak migrates the schema on start and can't migrate back), get the new
+digest **on the laptop** with `docker pull` of the new tag (for example
+`docker pull quay.io/keycloak/keycloak:26.7.5`; it prints `Digest:
+sha256:…`), change the image line, and deploy with `deploy/sync.sh`.
+
+### Safety copies from 2026-09-27
+
+**On the server**, taken before the stage 2 changes:
+
+- `/root/auth-config-2026-09-27/`: copy of `/opt/auth` as it was (including
+  the old `.env`; mode 700). It restores the old setup only together with the
+  old variables it contains.
+- `/root/keycloak-2026-09-27.sql`: plain `pg_dump` of the `keycloak`
+  database (mode 600, 348 KiB).
+- `/root/iptables-before-ufw-2026-09-27.rules` and
+  `/root/ip6tables-before-ufw-2026-09-27.rules`: firewall rules before ufw
+  was enabled.
+
+To take a new dump **on the server**:
+
+```bash
+cd /opt/auth && (umask 077; docker compose exec -T postgres pg_dump -U keycloak -d keycloak > /root/keycloak-$(date -u +%F).sql)
+```

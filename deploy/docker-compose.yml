@@ -1,25 +1,41 @@
-# Production variant of the stack: Keycloak + Postgres + Caddy (automatic HTTPS).
-# ONLY ports 80/443 (Caddy) are exposed publicly. Postgres and Keycloak are reachable
-# only inside the docker network; health port 9000 only from the server itself.
+# Production stack: Keycloak + Postgres + Caddy (automatic HTTPS), deployed to
+# /opt/auth on the server with deploy/sync.sh. See PRODUCTION.md.
+# ONLY Caddy publishes ports (80/443). Postgres and Keycloak are reachable only
+# inside the compose network; Keycloak's management port 9000 only from the
+# server itself. Settings and secrets come from /opt/auth/.env (template:
+# .env.example next to this file).
+
+# Fixed project name: the data volumes are auth_keycloak_pg_data and
+# auth_caddy_data. Under any other name compose would create new, empty ones.
+name: auth
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
-    image: postgres:16
+    # Images are pinned to an exact version; the digest fixes the exact build.
+    image: postgres:16.15@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
     restart: unless-stopped
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
-      - keycloak_pg_data:/var/lib/postgresql/data
+      - keycloak_pg_data:/var/lib/postgresql/data   # users, realm config, signing keys
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *logging
     # ports: intentionally NONE — the DB must not be reachable from the internet
 
   keycloak:
-    image: quay.io/keycloak/keycloak:${KC_VERSION:?set KC_VERSION in .env}
+    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
     command: start --import-realm          # prod mode instead of start-dev
     restart: unless-stopped
     depends_on:
@@ -34,20 +50,31 @@ services:
       KC_HTTP_ENABLED: "true"            # Caddy terminates TLS; plain HTTP to Keycloak inside the network
       KC_PROXY_HEADERS: xforwarded       # trust X-Forwarded-* from Caddy
       KC_HEALTH_ENABLED: "true"          # /health/* on port 9000
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:?set KC_ADMIN_USER in .env}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?set KC_ADMIN_PASSWORD in .env}
     volumes:
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     ports:
       - "127.0.0.1:9000:9000"            # health check only from the server's localhost
+    # The image has no curl or wget, so bash's /dev/tcp asks the management port.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && read -r status <&3 && [[ $$status == *' 200 '* ]]"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    # Measured use was about 620 MiB; the limit leaves about 50% headroom.
+    # The JVM sizes its heap to 70% of this limit.
+    mem_limit: 1g
+    logging: *logging
 
   caddy:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:14a9c00d4e833ebc2b65d36515b37bde3b73f0b323a2663aaafc88953d8c4e3f
     restart: unless-stopped
     depends_on:
-      - keycloak
+      keycloak:
+        condition: service_healthy
     environment:
       KC_DOMAIN: ${KC_DOMAIN}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:?set ADMIN_ALLOWED_IPS in .env}
     ports:
       - "80:80"
       - "443:443"
@@ -56,6 +83,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data                 # TLS certificates are stored here — do not delete
       - caddy_config:/config
+    logging: *logging
 
 volumes:
   keycloak_pg_data:

@@ -1,0 +1,17 @@
+# Changelog
+
+## 2026-09-27
+
+Stage 2: single production setup, admin allowlist, server hardening.
+
+- Repository: `deploy/` is now the only production setup. Removed `docker-compose.prod.yml`, the root `Caddyfile` and the Supabase variant; the env template moved to `deploy/.env.example`. `PRODUCTION.md` rewritten to describe the real setup, with a runbook; README updated.
+- Caddy: `/admin*` and `/realms/master*` (admin console, admin API, master realm) return 403 except to addresses in `ADMIN_ALLOWED_IPS`; `Server` and `Via` headers removed, including on the port-80 redirect; JSON access log on stdout, with ID tokens and authorization codes redacted.
+- Compose: images pinned by version and digest (Keycloak 26.7.4, Postgres 16.15, Caddy 2.11.4); log rotation (10 MB × 5) for every container; Keycloak healthcheck, and start order that waits for a healthy Postgres and Keycloak; Keycloak memory limit 1 GB; fixed project name `auth`; bootstrap admin variables removed from compose and from the `.env` files; `KC_VERSION` dropped from `.env`.
+- New `deploy/sync.sh`: dry run with diffs, copies the tracked deploy files to the server without touching `.env` or `realm-export.json`, keeps the files it replaces, runs `docker compose up -d` and waits until healthy. `deploy/smoke-test.sh` is now executable.
+- Server: SSH key-only with X11 forwarding off; fail2ban `sshd` jail; ufw allowing only 22/tcp, 80/tcp, 443/tcp and 443/udp; 2 GB swap file with swappiness 10; unattended-upgrades reboots automatically at 04:00 UTC when needed; `containerd.io` and `rust-coreutils` updated; rebooted into kernel 7.0.0-34.
+- Safety net taken on the server before the changes: a copy of `/opt/auth` and a one-off database dump (locations in `PRODUCTION.md`).
+- Verified: smoke test 11 ok / 0 fail before the changes, after the deploy and after the reboot; admin console 403 from outside the allowlist (mobile network and IPv6) and reachable from the allowlisted address.
+
+## 2026-09-26
+
+- Production audit of auth.finance-nl.com; report stored locally in private/audits (gitignored); .gitignore updated if needed
