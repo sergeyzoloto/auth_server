@@ -4,7 +4,7 @@
 #   deploy/sync.sh --dry-run   only show what would change
 #   deploy/sync.sh --yes       same as the default, without asking
 # Copies the git-tracked files of deploy/ (working tree) to /opt/auth. It never
-# copies or overwrites the files that hold secrets there (.env, realm-export.json);
+# copies or overwrites the secrets there (.env and the Keycloak vault/ directory);
 # edit those on the server. Files it replaces are kept on the server in
 # /root/auth-sync-backups/<UTC timestamp>/. deploy/backup/ is not copied; it is
 # installed with deploy/backup/install.sh.
@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 
 SERVER="${SERVER:-root@2.28.108.199}"
 DEST=/opt/auth
-PROTECTED=(.env realm-export.json)
+PROTECTED=(.env vault)
 HEALTH_TIMEOUT=300
 
 dry_run=0; assume_yes=0

@@ -3,3 +3,4 @@ deploy/.env
 deploy/realm-export.json
 deploy/smoke.env
 private/
+deploy/vault/

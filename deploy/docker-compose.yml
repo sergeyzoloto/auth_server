@@ -36,7 +36,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
-    command: start --import-realm          # prod mode instead of start-dev
+    command: start                         # prod mode instead of start-dev; no realm import
     restart: unless-stopped
     depends_on:
       postgres:
@@ -50,8 +50,14 @@ services:
       KC_HTTP_ENABLED: "true"            # Caddy terminates TLS; plain HTTP to Keycloak inside the network
       KC_PROXY_HEADERS: xforwarded       # trust X-Forwarded-* from Caddy
       KC_HEALTH_ENABLED: "true"          # /health/* on port 9000
+      # A realm setting written as ${vault.smtppassword} in realm myapps is read
+      # from the file myapps_smtppassword in this directory (PRODUCTION.md, "Vault").
+      KC_VAULT: file
+      KC_VAULT_DIR: /opt/keycloak/vault
     volumes:
-      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      # /opt/auth/vault on the server: owner uid 1000 (the container's keycloak
+      # user), directory 0500, files 0400. Not in git; sync.sh never touches it.
+      - ./vault:/opt/keycloak/vault:ro
     ports:
       - "127.0.0.1:9000:9000"            # health check only from the server's localhost
     # The image has no curl or wget, so bash's /dev/tcp asks the management port.

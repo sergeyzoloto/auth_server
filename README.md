@@ -14,15 +14,13 @@ per-project auth code.
 ```
 keycloak-auth-server/
 ├── docker-compose.yml         # dev: Keycloak + Postgres
-├── realm-export.json          # dev realm, clients, roles, one test user — imported on first boot
-├── realm-prod.json            # hardened realm template: no test user, no secrets (not deployed)
-├── Dockerfile                 # optimized Keycloak image (not used by the deployed stack)
+├── realm-export.json          # dev realm, clients, roles, one test user — imported on first boot (dev only)
 ├── deploy/                    # production: Keycloak + Postgres + Caddy — see PRODUCTION.md
 │   ├── docker-compose.yml
 │   ├── Caddyfile              # TLS, admin IP allowlist, access log
 │   ├── .env.example           # template for /opt/auth/.env on the server
 │   ├── sync.sh                # deploys deploy/ to the server
-│   ├── smoke-test.sh          # checks production from the laptop
+│   ├── smoke-test.sh          # checks production from the laptop (client smoke-test, no users)
 │   └── backup/                # nightly pg_dump, restore test, pull to the laptop (install.sh)
 └── spring-client-example/
     ├── application.yml        # points a Spring service at this realm

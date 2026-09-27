@@ -18,11 +18,15 @@ secrets, so never deploy it.
 | `/var/backups/pg/auth/`               | nightly dumps of that database, 14 days                | copies on the laptop in `~/backups/finance-nl-server/auth/`    |
 | Docker volume `auth_caddy_data`       | TLS certificates, ACME account                         | re-issued automatically                                        |
 | `/opt/auth/.env`                      | domain, database password, admin allowlist             | recreate by hand from `deploy/.env.example`                    |
-| `/opt/auth/realm-export.json`         | realm file imported once, at the very first start      | not needed while the database exists                           |
+| `/opt/auth/vault/`                    | Keycloak vault: the Brevo SMTP key                     | create a new SMTP key in Brevo and write it (see "Vault")      |
+| `/root/automation-cli.secret`         | secret of the admin client `automation-cli`            | regenerate it in the admin console (see "Admin CLI")           |
 
-`.env` and `realm-export.json` contain secrets. They exist only on the server
-(and in gitignored copies on the laptop), and `deploy/sync.sh` never copies
-or overwrites them. The server's `/opt/auth/.env` is the one that counts.
+`.env`, `vault/` and `automation-cli.secret` contain secrets. They exist only
+on the server, and `deploy/sync.sh` never copies or overwrites them. The
+server's `/opt/auth/.env` is the one that counts; the laptop's gitignored
+`deploy/.env` is not kept in sync. The realm configuration lives only in the
+database: there is no realm import file, so change settings in the admin
+console or with kcadm (see "Admin CLI"), and the nightly dump covers them.
 
 ## What is in place
 
@@ -63,6 +67,46 @@ or overwrites them. The server's `/opt/auth/.env` is the one that counts.
 - Log rotation for every container: `json-file`, 10 MB × 5 files.
 - Compose project name fixed to `auth`, so the volumes stay `auth_*`
   whatever the directory is called.
+- Keycloak runs `start` without `--import-realm`, with the file vault
+  (`KC_VAULT=file`, `KC_VAULT_DIR=/opt/keycloak/vault`). `/opt/auth/vault` is
+  mounted there read-only. It belongs to uid 1000, the container's `keycloak`
+  user (no account on the host has that uid), group 0, directory mode 500 and
+  file mode 400, so only that user and root can read it.
+
+### Realm `myapps`
+
+A public demo: anyone can register with an email address, has to confirm
+the address before the first login, and can reset a forgotten password by
+email. Set with kcadm on 2026-09-27 (stage 4):
+
+| Area                  | Setting                                                                                                                                                                                                                                                                                                                                            |
+|-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Registration, login   | `registrationAllowed`, `registrationEmailAsUsername`, `verifyEmail`, `resetPasswordAllowed` and `loginWithEmailAllowed` on; `duplicateEmailsAllowed`, `editUsernameAllowed` and `rememberMe` off                                                                                                                                                   |
+| Password policy       | `length(12) and maxLength(128) and notUsername and notEmail`                                                                                                                                                                                                                                                                                       |
+| Brute-force detection | temporary lockout only (`permanentLockout` off): after 10 failed logins the user waits 60 s, and every further 10 failures add 60 s (strategy `MULTIPLE`), up to 15 minutes; the count resets 12 hours after the last failure; two failures within 1 s also cause a 60 s wait                                                                      |
+| SMTP                  | `smtp-relay.brevo.com`, port 587, STARTTLS on, SSL off, authentication with the Brevo SMTP login, password `${vault.smtppassword}`; from `noreply@finance-nl.com`, display name `finance-nl.com`. Hetzner blocks outbound ports 25 and 465, so 587 is the only option. finance-nl.com is authenticated in Brevo; SPF, DKIM and DMARC pass at Gmail |
+| User events           | stored for 30 days, all event types. The `jboss-logging` listener also writes error events (`LOGIN_ERROR` and the like) to the Keycloak container log                                                                                                                                                                                              |
+| Admin events          | stored without representation details and without expiry                                                                                                                                                                                                                                                                                           |
+| Tokens                | refresh-token rotation: `revokeRefreshToken` on, `refreshTokenMaxReuse` 0. Other lifetimes are Keycloak's defaults: access token 5 min, SSO session idle 30 min and max 10 h, offline session idle 30 days with no maximum, access code 1 min, login 30 min, user action 5 min, action tokens 5 min (user) and 12 h (admin)                        |
+| Client policy         | `pkce-s256-public-clients`: for every public client (condition `client-access-type` = public), the profile `pkce-s256` runs the `pkce-enforcer` executor with `auto-configure` on. An authorization request from a public client without PKCE S256 is rejected with `invalid_request`                                                              |
+| `sslRequired`         | `external`. `all` would lock out kcadm, which talks to Keycloak over `http://localhost:8080` inside the container. From outside only Caddy reaches Keycloak, and it forwards the https scheme                                                                                                                                                      |
+
+Clients: the built-in `account`, `account-console`, `admin-cli`, `broker`,
+`realm-management` and `security-admin-console`, plus:
+
+- `automation-cli`: confidential, service account only, with the
+  `realm-management` role `realm-admin` (every admin right in `myapps`, none
+  in `master`). kcadm on the server signs in with it (see "Admin CLI").
+- `smoke-test`: confidential, `client_credentials` only (no standard flow,
+  no direct access grants); its service account has no roles, not even the
+  default ones. Only `deploy/smoke-test.sh` uses it.
+
+The built-in `admin-cli` is public with direct access grants on, so anyone
+can try `myapps` passwords over the token endpoint without a client secret;
+brute-force detection covers that. The finance app will get its own public
+client, `finance-web`. The demo clients `shop-api`, `blog-api` and
+`admin-app`, the confidential `finance-tracker` and the user `testuser` were
+deleted.
 
 ### Host
 
@@ -124,7 +168,12 @@ or overwrites them. The server's `/opt/auth/.env` is the one that counts.
   everything since then is lost too. A laptop that stays off for more than
   14 days also leaves gaps in its history. There is no second off-site copy,
   and Hetzner's server backups are off.
-- Stored login and admin events, monitoring and alerting.
+- Monitoring and alerting. Events are stored in `myapps` (see above), but
+  nothing reports on them.
+- **Spam registrations.** Registration is open with no captcha and no rate
+  limit; only the email confirmation stands in the way. Watch the `REGISTER`
+  events (see "Watch registrations and events") and add a captcha if bots
+  show up.
 - High availability: one Keycloak instance. If the server is down, logins and
   token refreshes stop; already issued access tokens keep working until they
   expire (5 minutes).
@@ -160,7 +209,7 @@ deploy/sync.sh             # the same, asks, copies, runs docker compose up -d, 
 ```
 
 `sync.sh` copies the git-tracked files of `deploy/` to `/opt/auth`, never
-`.env` or `realm-export.json`. It warns when `deploy/` has uncommitted
+`.env` or `vault/`. It warns when `deploy/` has uncommitted
 changes. The deployed revision is in `/opt/auth/.deployed-revision`, and the
 files it replaced are in `/root/auth-sync-backups/`, one directory per deploy
 named by UTC time. To undo the most recent deploy, **on the server**:
@@ -173,7 +222,12 @@ cd /opt/auth && docker compose up -d
 
 The first directory, `/root/auth-sync-backups/20260927T121134Z`, holds the
 setup from before stage 2. It also needs the variables that were removed
-from `.env` then; they are in `/root/auth-config-2026-09-27/.env`.
+from `.env` then; they are in `/root/auth-config-2026-09-27/.env`. The
+compose files from before stage 4 (up to `20260927T135505Z`) mount
+`/opt/auth/realm-export.json`, which no longer exists; to go back to one of
+them, first copy `/root/auth-config-2026-09-27/realm-export.json` to
+`/opt/auth/` (it holds the old client secrets and the test user's password,
+but it is only imported into an empty database).
 
 ### Change the admin IP
 
@@ -222,13 +276,190 @@ ssh root@2.28.108.199 'cd /opt/auth && docker compose logs --no-log-prefix caddy
 
 ### Run the smoke test
 
-**On the laptop** (reads the gitignored `deploy/smoke.env`):
+**On the laptop**:
 
 ```bash
 deploy/smoke-test.sh
 ```
 
-Expected last line: `== Summary: 11 ok, 0 fail ==`.
+Expected last line: `== Summary: 11 ok, 0 fail ==`. The script needs
+`curl`, `jq`, `python3` and `nc`, and reads the gitignored
+`deploy/smoke.env` (`DOMAIN`, `REALM`, `CLIENT_ID=smoke-test`,
+`CLIENT_SECRET`). It uses no user account. It checks that:
+
+1. HTTP redirects to HTTPS;
+2. the certificate is valid and the realm answers;
+3. the discovery document's issuer is `https://auth.finance-nl.com/realms/myapps`;
+4. JWKS lists signing keys;
+5. `smoke-test` gets a token with `client_credentials`;
+6. the token's `iss` matches the issuer;
+7. a wrong client secret gets 401;
+8. the password grant with `smoke-test` is refused (400 `unauthorized_client`);
+9. ports 5432, 8080 and 9000 are closed from outside (three checks).
+
+Each run leaves a `CLIENT_LOGIN`, a `CLIENT_LOGIN_ERROR` and a `LOGIN_ERROR`
+event in `myapps`; the two errors also appear as WARN lines in the Keycloak
+log. The `smoke-test` secret only yields a token with no roles.
+
+To create `deploy/smoke.env` on another laptop, or after the secret was
+regenerated, copy the secret from the admin console (realm `myapps` →
+Clients → `smoke-test` → Credentials), then **on the laptop** paste it at
+the prompt:
+
+```bash
+IFS= read -rs -p 'smoke-test client secret: ' s; echo
+(umask 077; printf 'DOMAIN=auth.finance-nl.com\nREALM=myapps\nCLIENT_ID=smoke-test\nCLIENT_SECRET=%s\n' "$s" > deploy/smoke.env)
+unset s
+```
+
+### Admin CLI (kcadm with `automation-cli`)
+
+The confidential client `automation-cli` lets this runbook and scripts
+change realm `myapps` from the server without the master admin: kcadm runs
+inside the Keycloak container, talks to `http://localhost:8080` and signs in
+with the client's secret. Its service account holds the `realm-management`
+role `realm-admin`, so the secret is worth as much as an admin password for
+`myapps`; it has no rights in `master`. The secret is in
+`/root/automation-cli.secret` on the server (owner root, mode 600, no
+trailing newline). Never print it; the commands below read it with
+`$(cat …)` inside the server's shell.
+
+Sign in, **on the server**. The sections below use the `kc` helper; kcadm
+keeps its session in `/tmp/kcadm.config` inside the container:
+
+```bash
+kc() { docker compose -f /opt/auth/docker-compose.yml exec -T keycloak /opt/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm.config </dev/null; }
+kc config credentials --server http://localhost:8080 --realm myapps --client automation-cli --secret "$(cat /root/automation-cli.secret)"
+kc get realms/myapps --fields registrationAllowed,verifyEmail,passwordPolicy
+```
+
+- Always pass `--fields` when reading clients: a full client
+  representation includes its secret.
+- A repeated `-q` key counts only once (the last one wins), so filter by one
+  event type at a time.
+
+When you are done, delete the session file, **on the server** (recreating
+the container deletes it too):
+
+```bash
+docker compose -f /opt/auth/docker-compose.yml exec -T keycloak rm -f /tmp/kcadm.config
+```
+
+**Rotate the secret**, **on the server**, after signing in. The old secret
+stops working at once; the current kcadm session lasts until its token
+expires (5 minutes). Check that `wc -c` does not print 0 before the `mv`:
+
+```bash
+id=$(kc get clients -r myapps -q clientId=automation-cli --fields id --format csv --noquotes)
+kc create clients/$id/client-secret -r myapps > /dev/null
+(umask 077; kc get clients/$id/client-secret -r myapps --fields value --format csv --noquotes | tr -d '\n' > /root/automation-cli.secret.new)
+wc -c /root/automation-cli.secret.new
+mv /root/automation-cli.secret.new /root/automation-cli.secret
+kc config credentials --server http://localhost:8080 --realm myapps --client automation-cli --secret "$(cat /root/automation-cli.secret)"
+```
+
+On 2026-09-27 these commands rotated the `smoke-test` secret (with
+`smoke-test` in place of `automation-cli`); they have not been run for
+`automation-cli` itself. If something goes wrong halfway, regenerate the
+secret in the admin console (realm `myapps` → Clients → `automation-cli` →
+Credentials → Regenerate), copy it and write it, **on the server**:
+
+```bash
+IFS= read -rs -p 'automation-cli secret: ' s; echo
+(umask 077; printf '%s' "$s" > /root/automation-cli.secret)
+unset s
+```
+
+**Disable it** in the admin console (realm `myapps` → Clients →
+`automation-cli` → Enabled off). New sign-ins fail at once. kcadm can also
+disable its own client, **on the server** after signing in, but then only
+the admin console can turn it back on:
+
+```bash
+id=$(kc get clients -r myapps -q clientId=automation-cli --fields id --format csv --noquotes)
+kc update clients/$id -r myapps -s enabled=false
+```
+
+### Vault: add or rotate a secret
+
+A realm setting can refer to a file in the vault instead of holding the
+secret: `${vault.smtppassword}` in realm `myapps` reads
+`/opt/auth/vault/myapps_smtppassword`. The file name is the realm name, an
+underscore and the key; an underscore inside the realm name or the key is
+doubled (key `github_secret` in realm `myapps` is the file
+`myapps_github__secret`). The file holds only the value, with no trailing
+newline.
+
+On a new server, create the directory before the first `docker compose up`
+(otherwise Docker creates it empty and owned by root), **on the server**:
+
+```bash
+install -d -m 500 -o 1000 -g 0 /opt/auth/vault
+```
+
+To replace the SMTP key (or add another secret under its own file name),
+**on the server**. The value is pasted at the prompt, so it never reaches the
+shell history, and `printf` is a shell builtin, so it never shows up in the
+process list:
+
+```bash
+IFS= read -rs -p 'Value: ' v; echo
+(umask 077; printf '%s' "$v" > /opt/auth/vault/myapps_smtppassword.new)
+unset v
+chown 1000:0 /opt/auth/vault/myapps_smtppassword.new
+chmod 400 /opt/auth/vault/myapps_smtppassword.new
+mv /opt/auth/vault/myapps_smtppassword.new /opt/auth/vault/myapps_smtppassword
+stat -c '%n %u:%g %a %s bytes' /opt/auth/vault/*
+```
+
+`stat` must show owner `1000:0`, mode `400` and a size that is not 0. These
+steps were tried with a throwaway key on 2026-09-27; the container could
+read the file. Keycloak reads a vault file when it uses the value, so no
+restart should be needed. Check by sending yourself a password-reset email
+from the login page, and restart Keycloak (**on the server**:
+`cd /opt/auth && docker compose restart keycloak`) if it still fails.
+
+### Watch registrations and events
+
+User events are kept for 30 days. The quickest view is the admin console
+(realm `myapps` → Events → User events, filter by event type). The event
+details include the user's email address and IP. Types worth knowing in
+Keycloak 26:
+
+| Event type                             | Meaning                                                                                                 |
+|----------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `REGISTER`, `REGISTER_ERROR`           | self-registration                                                                                       |
+| `SEND_VERIFY_EMAIL`, `VERIFY_EMAIL`    | confirmation email sent, address confirmed                                                              |
+| `SEND_RESET_PASSWORD`                  | "Forgot password" email sent                                                                            |
+| `UPDATE_CREDENTIAL`, `UPDATE_PASSWORD` | password set or changed (both are logged); `_ERROR` with `password_rejected` when the policy refuses it |
+| `LOGIN`, `LOGIN_ERROR`                 | sign-ins and failed sign-ins                                                                            |
+| `USER_DISABLED_BY_TEMPORARY_LOCKOUT`   | brute-force lockout                                                                                     |
+
+In the test on 2026-09-27 a password reset showed up as
+`SEND_RESET_PASSWORD` followed by `UPDATE_PASSWORD` and `UPDATE_CREDENTIAL`;
+there was no `RESET_PASSWORD` event.
+
+With kcadm, **on the server** after signing in (see "Admin CLI"); `time` is
+in milliseconds since 1970:
+
+```bash
+kc get events -r myapps -q type=REGISTER -q dateFrom=2026-09-27 -q max=1000 --fields time --format csv --noquotes | wc -l
+kc get events -r myapps -q type=REGISTER -q max=20 --fields time,ipAddress,details
+kc get events -r myapps -q type=LOGIN_ERROR -q max=20 --fields time,error,ipAddress
+kc get admin-events -r myapps -q max=20 --fields time,operationType,resourceType,resourcePath
+```
+
+The first line counts registrations since 2026-09-27. Error events also go
+to the Keycloak log, **on the server**:
+
+```bash
+cd /opt/auth && docker compose logs --since 24h keycloak | grep -E 'type="(REGISTER_ERROR|LOGIN_ERROR)"'
+```
+
+**Spam registrations:** if `REGISTER` events pile up from a few addresses,
+or many new accounts never reach `VERIFY_EMAIL`, add a captcha to the
+registration flow (Authentication → `registration` has a disabled
+reCAPTCHA step) and delete the junk accounts.
 
 ### Restart the stack
 
