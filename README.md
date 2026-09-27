@@ -90,7 +90,9 @@ docker compose down -v && docker compose up -d
 `-v` drops the Postgres volume so the realm is "new" again and gets
 re-imported — but it also discards any changes made by hand in the admin
 console. On a system with real data, add the client through the Admin
-Console or the Admin REST API instead of wiping the volume.
+Console or the Admin REST API instead of wiping the volume. For production,
+follow "Connecting a new app to this auth server" in
+[PRODUCTION.md](PRODUCTION.md).
 
 ## Before this touches real production
 The production stack is in `deploy/`; [PRODUCTION.md](PRODUCTION.md)

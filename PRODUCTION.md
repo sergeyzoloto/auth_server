@@ -12,14 +12,14 @@ The dev stack in the repository root (`docker-compose.yml`,
 `realm-export.json`) is for local work only. It has a test user and fixed
 secrets, so never deploy it.
 
-| Where (on the server)                 | What it holds                                          | If it's lost                                                   |
-|---------------------------------------|--------------------------------------------------------|----------------------------------------------------------------|
-| Docker volume `auth_keycloak_pg_data` | users, sessions, realm and client config, signing keys | restore the newest dump (see "Restore production from a dump") |
-| `/var/backups/pg/auth/`               | nightly dumps of that database, 14 days                | copies on the laptop in `~/backups/finance-nl-server/auth/`    |
-| Docker volume `auth_caddy_data`       | TLS certificates, ACME account                         | re-issued automatically                                        |
-| `/opt/auth/.env`                      | domain, database password, admin allowlist             | recreate by hand from `deploy/.env.example`                    |
-| `/opt/auth/vault/`                    | Keycloak vault: the Brevo SMTP key                     | create a new SMTP key in Brevo and write it (see "Vault")      |
-| `/root/automation-cli.secret`         | secret of the admin client `automation-cli`            | regenerate it in the admin console (see "Admin CLI")           |
+| Where (on the server)                 | What it holds                                                            | If it's lost                                                             |
+|---------------------------------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| Docker volume `auth_keycloak_pg_data` | users, sessions, realm and client config, signing keys                   | restore the newest dump (see "Restore production from a dump")           |
+| `/var/backups/pg/auth/`               | nightly dumps of that database, 14 days                                  | copies on the laptop in `~/backups/finance-nl-server/auth/`              |
+| Docker volume `auth_caddy_data`       | TLS certificates, ACME account                                           | re-issued automatically                                                  |
+| `/opt/auth/.env`                      | domain, database password, admin allowlist                               | recreate by hand from `deploy/.env.example`                              |
+| `/opt/auth/vault/`                    | Keycloak vault: the Brevo SMTP key, the Google and GitHub client secrets | create new ones in Brevo, Google and GitHub and write them (see "Vault") |
+| `/root/automation-cli.secret`         | secret of the admin client `automation-cli`                              | regenerate it in the admin console (see "Admin CLI")                     |
 
 `.env`, `vault/` and `automation-cli.secret` contain secrets. They exist only
 on the server, and `deploy/sync.sh` never copies or overwrites them. The
@@ -77,16 +77,20 @@ console or with kcadm (see "Admin CLI"), and the nightly dump covers them.
 
 A public demo: anyone can register with an email address, has to confirm
 the address before the first login, and can reset a forgotten password by
-email. Set with kcadm on 2026-09-27 (stage 4):
+email. Anyone can also sign in with Google or GitHub (see "Identity
+providers"). Set with kcadm on 2026-09-27 (stage 4, and stage 5 for the
+identity providers, the default role and the admin events expiration):
 
 | Area                  | Setting                                                                                                                                                                                                                                                                                                                                            |
 |-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Registration, login   | `registrationAllowed`, `registrationEmailAsUsername`, `verifyEmail`, `resetPasswordAllowed` and `loginWithEmailAllowed` on; `duplicateEmailsAllowed`, `editUsernameAllowed` and `rememberMe` off                                                                                                                                                   |
+| Identity providers    | `google` and `github`, shown on the login page, first login flow `first broker login` (the default, unchanged). Details in "Identity providers" below                                                                                                                                                                                              |
+| Default roles         | `default-roles-myapps` = `offline_access`, `uma_authorization`, `account` → `manage-account` and `view-profile` (Keycloak's defaults), plus `finance-tracker` → `user` since stage 5, so every user, new or existing, may use Finance Tracker                                                                                                      |
 | Password policy       | `length(12) and maxLength(128) and notUsername and notEmail`                                                                                                                                                                                                                                                                                       |
 | Brute-force detection | temporary lockout only (`permanentLockout` off): after 10 failed logins the user waits 60 s, and every further 10 failures add 60 s (strategy `MULTIPLE`), up to 15 minutes; the count resets 12 hours after the last failure; two failures within 1 s also cause a 60 s wait                                                                      |
 | SMTP                  | `smtp-relay.brevo.com`, port 587, STARTTLS on, SSL off, authentication with the Brevo SMTP login, password `${vault.smtppassword}`; from `noreply@finance-nl.com`, display name `finance-nl.com`. Hetzner blocks outbound ports 25 and 465, so 587 is the only option. finance-nl.com is authenticated in Brevo; SPF, DKIM and DMARC pass at Gmail |
 | User events           | stored for 30 days, all event types. The `jboss-logging` listener also writes error events (`LOGIN_ERROR` and the like) to the Keycloak container log                                                                                                                                                                                              |
-| Admin events          | stored without representation details and without expiry                                                                                                                                                                                                                                                                                           |
+| Admin events          | stored without representation details, kept 90 days (realm attribute `adminEventsExpiration` = 7776000 s, since stage 5); Keycloak's periodic cleanup deletes older ones                                                                                                                                                                           |
 | Tokens                | refresh-token rotation: `revokeRefreshToken` on, `refreshTokenMaxReuse` 0. Other lifetimes are Keycloak's defaults: access token 5 min, SSO session idle 30 min and max 10 h, offline session idle 30 days with no maximum, access code 1 min, login 30 min, user action 5 min, action tokens 5 min (user) and 12 h (admin)                        |
 | Client policy         | `pkce-s256-public-clients`: for every public client (condition `client-access-type` = public), the profile `pkce-s256` runs the `pkce-enforcer` executor with `auto-configure` on. An authorization request from a public client without PKCE S256 is rejected with `invalid_request`                                                              |
 | `sslRequired`         | `external`. `all` would lock out kcadm, which talks to Keycloak over `http://localhost:8080` inside the container. From outside only Caddy reaches Keycloak, and it forwards the https scheme                                                                                                                                                      |
@@ -96,17 +100,169 @@ Clients: the built-in `account`, `account-console`, `admin-cli`, `broker`,
 
 - `automation-cli`: confidential, service account only, with the
   `realm-management` role `realm-admin` (every admin right in `myapps`, none
-  in `master`). kcadm on the server signs in with it (see "Admin CLI").
+  in `master`). kcadm on the server signs in with it (see "Admin CLI"). No
+  redirect URIs and no web origins (the leftover `/*` entries were removed
+  in stage 5; its standard flow is off).
 - `smoke-test`: confidential, `client_credentials` only (no standard flow,
   no direct access grants); its service account has no roles, not even the
   default ones. Only `deploy/smoke-test.sh` uses it.
+- `finance-tracker`: the Finance Tracker app, confidential (see below).
 
 The built-in `admin-cli` is public with direct access grants on, so anyone
 can try `myapps` passwords over the token endpoint without a client secret;
-brute-force detection covers that. The finance app will get its own public
-client, `finance-web`. The demo clients `shop-api`, `blog-api` and
-`admin-app`, the confidential `finance-tracker` and the user `testuser` were
-deleted.
+brute-force detection covers that. In stage 4 the demo clients `shop-api`,
+`blog-api` and `admin-app`, the old confidential `finance-tracker` (from the
+realm import, with a dev secret) and the user `testuser` were deleted; stage
+5 created `finance-tracker` anew.
+
+### Client `finance-tracker` (Finance Tracker)
+
+Finance Tracker (`https://app.finance-nl.com`, its own repository) signs
+users in as a backend-for-frontend: its Spring backend runs the
+authorization code flow with PKCE, keeps the tokens in its server-side
+session and gives the browser only an `HttpOnly` session cookie. So the
+client is confidential; a public client would put tokens in the browser for
+nothing. Created with kcadm on 2026-09-27 (stage 5):
+
+| Setting                        | Value                                                                                                                 | Why                                                                                                                                                                                |
+|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Client authentication          | on (`client-secret`)                                                                                                  | the backend can keep a secret, and the code exchange and refreshes then need it                                                                                                    |
+| Flows                          | standard flow only; implicit flow, direct access grants and service account off; consent off                          | the app only needs the code flow, nobody types a password into anything but Keycloak's page, and it is a first-party app                                                           |
+| PKCE                           | `pkce.code.challenge.method` = `S256` on the client                                                                   | the realm's client policy covers only public clients. Spring Security 6.5 sends `code_challenge_method=S256` because the app sets `requireProofKey(true)`                          |
+| Valid redirect URI             | `https://app.finance-nl.com/login/oauth2/code/keycloak`, exact                                                        | Spring's callback `{baseUrl}/login/oauth2/code/keycloak`. An exact URI leaves no room for redirects elsewhere on the site                                                          |
+| Valid post logout redirect URI | `https://app.finance-nl.com/`                                                                                         | where the app's logout handler returns to (`{baseUrl}/`)                                                                                                                           |
+| Web origins                    | none                                                                                                                  | the browser never calls Keycloak with CORS; every token request comes from the backend                                                                                             |
+| Full scope allowed             | off                                                                                                                   | tokens carry only this client's own roles, no realm roles and no other client's roles                                                                                              |
+| Front-channel logout           | off; no back-channel logout URL                                                                                       | the app has neither endpoint. A logout elsewhere ends the app's session at its next token refresh, within about 5 minutes                                                          |
+| Base URL                       | `https://app.finance-nl.com/`                                                                                         | the app's link in the account console                                                                                                                                              |
+| Client role                    | `user`, in `default-roles-myapps`                                                                                     | the backend requires it (see "Audience and role")                                                                                                                                  |
+| Mapper                         | `finance-tracker audience`: Audience, Included Client Audience `finance-tracker`, access token and introspection only | see "Audience and role"                                                                                                                                                            |
+| Secret                         | generated by Keycloak when the client was created                                                                     | never read on the server or put in this repository; it is copied from the admin console (Clients → `finance-tracker` → Credentials) into the app's `.env` when the app is deployed |
+
+The app's local development uses the dev stack's Keycloak at
+`http://localhost:8080`, so production has no localhost redirect URIs.
+
+#### Audience and role
+
+The backend accepts an access token only if its `iss` is
+`https://auth.finance-nl.com/realms/myapps`, its `aud` contains
+`finance-tracker` and `resource_access.finance-tracker.roles` contains
+`user`. It ignores realm roles on purpose. The user id is `sub`; `email`,
+`name` and `preferred_username` are only shown.
+
+- **Audience.** Keycloak's built-in "audience resolve" mapper puts into
+  `aud` every client whose roles the token carries, except the client that
+  asked for the token. Without the `finance-tracker audience` mapper the
+  app's own tokens would lack `finance-tracker` in `aud`, and the backend
+  would reject them. The mapper names the client itself (Included Client
+  Audience) rather than a free-text custom audience: the audience is the
+  same client whose roles the backend reads, so `aud` and
+  `resource_access` always name the same client.
+- **Role.** `finance-tracker` → `user` is a client role, so it means
+  nothing to other apps, and it is part of `default-roles-myapps`: every
+  new user gets it, whether they register with an email address or arrive
+  through Google or GitHub, and existing users have it through their
+  default role too. Each user sees only their own ledger, because the app
+  keys all data by `sub`.
+- **Limit.** Clients with full scope allowed (`admin-cli`,
+  `security-admin-console`) also get `finance-tracker` in `aud` and the
+  `user` role in their tokens. With the password grant on `admin-cli`, a
+  user can get such a token for themselves and call the API directly; that
+  opens only their own data, as a normal login would.
+
+To stop giving the role to everyone, remove it from the default role and
+assign it per user instead, **on the server** after signing in (see "Admin
+CLI"):
+
+```bash
+kc remove-roles -r myapps --rname default-roles-myapps --cclientid finance-tracker --rolename user
+```
+
+Example access token for the only user, from the evaluate-scopes endpoint
+on 2026-09-27 (scope `openid profile email`, personal values redacted):
+
+```json
+{
+  "iss": "https://auth.finance-nl.com/realms/myapps",
+  "aud": "finance-tracker",
+  "azp": "finance-tracker",
+  "sub": "7df2283a-b1c7-4959-a9ac-e88f71859ba6",
+  "typ": "Bearer",
+  "acr": "1",
+  "resource_access": { "finance-tracker": { "roles": ["user"] } },
+  "scope": "openid email profile",
+  "email_verified": true,
+  "email": "(redacted)",
+  "name": "(redacted)",
+  "preferred_username": "(redacted)",
+  "given_name": "(redacted)",
+  "family_name": "(redacted)"
+}
+```
+
+There is no `realm_access`, because full scope is off.
+
+### Identity providers (Google, GitHub)
+
+Set with kcadm on 2026-09-27 (stage 5). Both use the default first login
+flow and import mode, and both show a button on the login page.
+
+| Setting                         | `google`                                                                                                   | `github`                                                                                      |
+|---------------------------------|------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| Provider type, display name     | Google, `Google`                                                                                           | GitHub, `GitHub`                                                                              |
+| Client ID                       | `891890306139-5250q9075robb0lvl3c8phhjacqdq8qm.apps.googleusercontent.com`                                 | `Ov23liuOFSXjfJwCjwZk`                                                                        |
+| Client secret                   | `${vault.googlesecret}`, the file `/opt/auth/vault/myapps_googlesecret`                                    | `${vault.githubsecret}`, the file `/opt/auth/vault/myapps_githubsecret`                       |
+| Scopes                          | `openid profile email`                                                                                     | the provider's default (`user:email`: profile and email addresses, read-only)                 |
+| Trust email                     | on                                                                                                         | off                                                                                           |
+| First login flow                | `first broker login`                                                                                       | `first broker login`                                                                          |
+| Sync mode                       | import                                                                                                     | import                                                                                        |
+| Store tokens, link only, hidden | off                                                                                                        | off                                                                                           |
+| Configured at the provider      | Google Cloud Console → Google Auth Platform → Clients: the web application client with the client ID above | GitHub → Settings → Developer settings → OAuth Apps → `finance-nl.com`                        |
+| Redirect URI at the provider    | Authorized redirect URI `https://auth.finance-nl.com/realms/myapps/broker/google/endpoint`                 | Authorization callback URL `https://auth.finance-nl.com/realms/myapps/broker/github/endpoint` |
+
+- **Trust email on for Google:** Google returns only addresses it has
+  verified, so a new account from Google starts with its email verified.
+- **Trust email off for GitHub:** an address from GitHub is not taken as
+  proof. A new account from GitHub gets the required action `VERIFY_EMAIL`,
+  and Keycloak sends it the confirmation email before the first login
+  completes.
+- **Import:** profile data is copied only at the first login; later
+  changes at Google or GitHub don't overwrite what the user has here.
+- The client IDs are not secret. Only the vault files hold the secrets.
+- For anyone outside the Google project to sign in with Google, the Google
+  Auth Platform → Audience page must say "In production"; in "Testing"
+  only the listed test users can. Not checked in stage 5.
+
+What a first login does (tested on 2026-09-27):
+
+- **New email address:** Keycloak creates a user (`REGISTER` event with
+  `register_method` = `broker`) with the default roles. From GitHub the
+  user first confirms the address by email; from Google they are signed in
+  at once. "Review Profile" appears only when the provider leaves a
+  required field empty.
+- **Email of an existing user:** Keycloak shows "Account already exists";
+  after "Add to existing account" it emails a link to that account's
+  address ("Verify existing account by Email"), and the link links the
+  accounts and signs the user in. Trust email does not skip this step, so
+  a Google account can't take over an account here just by having the same
+  address. The flow's other option, signing in again with the account's
+  password, is meant for when Keycloak can't send that email (not tested).
+- **Linking while signed in:** account console → Account security →
+  Linked accounts → Link account. An identity that is already linked to
+  another user is refused (`FEDERATED_IDENTITY_LINK_ERROR`,
+  `identityProviderAlreadyLinkedMessage`); delete or unlink the other user
+  first.
+
+To see who uses which provider, **on the server** after signing in (see
+"Admin CLI"):
+
+```bash
+kc get users -r myapps -q idpAlias=github --fields id,username
+kc get users -r myapps -q idpAlias=google --fields id,username
+kc get users/7df2283a-b1c7-4959-a9ac-e88f71859ba6/federated-identity -r myapps
+```
+
+The last line lists the providers linked to one user (here the first user).
 
 ### Host
 
@@ -174,6 +330,10 @@ deleted.
   limit; only the email confirmation stands in the way. Watch the `REGISTER`
   events (see "Watch registrations and events") and add a captcha if bots
   show up.
+- **Logout propagation to apps.** No client has back-channel logout:
+  Finance Tracker has no endpoint for it, so a logout elsewhere (or a
+  disabled user) reaches it only at its next token refresh, within about
+  5 minutes.
 - High availability: one Keycloak instance. If the server is down, logins and
   token refreshes stop; already issued access tokens keep working until they
   expire (5 minutes).
@@ -386,9 +546,15 @@ A realm setting can refer to a file in the vault instead of holding the
 secret: `${vault.smtppassword}` in realm `myapps` reads
 `/opt/auth/vault/myapps_smtppassword`. The file name is the realm name, an
 underscore and the key; an underscore inside the realm name or the key is
-doubled (key `github_secret` in realm `myapps` is the file
+doubled (key `github_secret` in realm `myapps` would be the file
 `myapps_github__secret`). The file holds only the value, with no trailing
-newline.
+newline. The vault holds:
+
+| File                  | Used by                                             | Where a new value comes from                                                                                        |
+|-----------------------|-----------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `myapps_smtppassword` | realm SMTP password, `${vault.smtppassword}`        | Brevo → SMTP & API → SMTP keys                                                                                      |
+| `myapps_googlesecret` | identity provider `google`, `${vault.googlesecret}` | Google Cloud Console → Google Auth Platform → Clients → the client `891890306139-5250q9075robb0lvl3c8phhjacqdq8qm…` |
+| `myapps_githubsecret` | identity provider `github`, `${vault.githubsecret}` | GitHub → Settings → Developer settings → OAuth Apps → `finance-nl.com`                                              |
 
 On a new server, create the directory before the first `docker compose up`
 (otherwise Docker creates it empty and owned by root), **on the server**:
@@ -397,27 +563,154 @@ On a new server, create the directory before the first `docker compose up`
 install -d -m 500 -o 1000 -g 0 /opt/auth/vault
 ```
 
-To replace the SMTP key (or add another secret under its own file name),
-**on the server**. The value is pasted at the prompt, so it never reaches the
-shell history, and `printf` is a shell builtin, so it never shows up in the
-process list:
+To replace a value (or add another secret under its own file name),
+**on the server**. Set `f` to the file (the example replaces the SMTP key;
+use `myapps_googlesecret` or `myapps_githubsecret` for the others). The
+value is pasted at the prompt, so it never reaches the shell history, and
+`printf` is a shell builtin, so it never shows up in the process list:
 
 ```bash
+f=/opt/auth/vault/myapps_smtppassword
 IFS= read -rs -p 'Value: ' v; echo
-(umask 077; printf '%s' "$v" > /opt/auth/vault/myapps_smtppassword.new)
+(umask 077; printf '%s' "$v" > "$f.new")
 unset v
-chown 1000:0 /opt/auth/vault/myapps_smtppassword.new
-chmod 400 /opt/auth/vault/myapps_smtppassword.new
-mv /opt/auth/vault/myapps_smtppassword.new /opt/auth/vault/myapps_smtppassword
+chown 1000:0 "$f.new"
+chmod 400 "$f.new"
+mv "$f.new" "$f"
 stat -c '%n %u:%g %a %s bytes' /opt/auth/vault/*
 ```
 
-`stat` must show owner `1000:0`, mode `400` and a size that is not 0. These
-steps were tried with a throwaway key on 2026-09-27; the container could
-read the file. Keycloak reads a vault file when it uses the value, so no
-restart should be needed. Check by sending yourself a password-reset email
-from the login page, and restart Keycloak (**on the server**:
-`cd /opt/auth && docker compose restart keycloak`) if it still fails.
+`stat` must show owner `1000:0`, mode `400` and a size that is not 0 for
+every file. These steps were tried with a throwaway key on 2026-09-27; the
+container could read the file. The Google and GitHub files were written by
+hand in stage 5 and then given the same owner and mode. Keycloak reads a
+vault file when it uses the value, so no restart should be needed. Check:
+for the SMTP key, send yourself a password-reset email from the login page;
+for Google or GitHub, sign in with that button in a private window. Restart
+Keycloak (**on the server**: `cd /opt/auth && docker compose restart
+keycloak`) if it still fails.
+
+**Rotate the Google or GitHub client secret** without an outage:
+
+1. At the provider (see the table above), create a second secret; both
+   providers show a new secret only once. Google: the client's page → Add
+   secret. GitHub: the OAuth App → Generate a new client secret. The old
+   secret keeps working meanwhile.
+2. Write the new secret to `myapps_googlesecret` or `myapps_githubsecret`
+   with the commands above, **on the server**.
+3. Sign in with that provider in a private window at
+   `https://auth.finance-nl.com/realms/myapps/account/`. A failure shows
+   up as `IDENTITY_PROVIDER_LOGIN_ERROR` in the events and as a WARN line
+   in the Keycloak log.
+4. Only then disable and delete the old secret at the provider.
+
+If a secret leaked, delete it at the provider first and accept the outage
+for that button until step 3 passes.
+
+### Connecting a new app to this auth server
+
+The checklist follows how `finance-tracker` was set up in stage 5: an app
+whose server keeps the tokens (a backend-for-frontend or a server-rendered
+web app) gets a confidential client. The commands carry Finance Tracker's
+values; for a new app, change the variables at the top.
+
+1. **Read what the app expects**, from its code, not its docs: the exact
+   redirect URI and post-logout URI, the scopes it asks for, whether it
+   sends PKCE S256, the audience it checks, which claim it reads roles from
+   (`resource_access` of which client, or `realm_access`), the role names,
+   and the claim it uses as the user id. Its local development must point
+   at the dev stack (`http://localhost:8080`), never at production; if it
+   points at production, fix the app rather than adding localhost URIs
+   here.
+2. **Back up**, **on the server**: `systemctl start pg-backup@auth.service`
+   (it must exit 0; see "Run a backup now").
+3. **Create the client, its role and the audience mapper**, **on the
+   server** after signing in (see "Admin CLI"):
+
+   ```bash
+   app=finance-tracker
+   app_name='Finance Tracker'
+   base=https://app.finance-nl.com/
+   callback=https://app.finance-nl.com/login/oauth2/code/keycloak
+   logout_to=https://app.finance-nl.com/
+   cid=$(kc create clients -r myapps -i -s clientId=$app -s "name=$app_name" \
+     -s protocol=openid-connect -s publicClient=false -s clientAuthenticatorType=client-secret \
+     -s standardFlowEnabled=true -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false \
+     -s serviceAccountsEnabled=false -s consentRequired=false -s fullScopeAllowed=false \
+     -s frontchannelLogout=false -s baseUrl=$base \
+     -s "redirectUris=[\"$callback\"]" -s 'webOrigins=[]' \
+     -s 'attributes."pkce.code.challenge.method"=S256' \
+     -s "attributes.\"post.logout.redirect.uris\"=$logout_to")
+   echo "$cid"
+   kc create clients/$cid/roles -r myapps -s name=user
+   kc add-roles -r myapps --rname default-roles-myapps --cclientid $app --rolename user
+   kc create clients/$cid/protocol-mappers/models -r myapps -s "name=$app audience" \
+     -s protocol=openid-connect -s protocolMapper=oidc-audience-mapper \
+     -s "config.\"included.client.audience\"=$app" -s 'config."id.token.claim"=false' \
+     -s 'config."access.token.claim"=true' -s 'config."introspection.token.claim"=true' \
+     -s 'config."lightweight.claim"=false'
+   kc get clients/$cid -r myapps --fields 'clientId,publicClient,standardFlowEnabled,directAccessGrantsEnabled,fullScopeAllowed,redirectUris,webOrigins,attributes(*),protocolMappers(name,config(*))'
+   ```
+
+   - One exact redirect URI per callback the app really has; no `/*`.
+   - Web origins stay empty unless the browser itself calls Keycloak.
+   - Full scope off, so its tokens carry only its own roles.
+   - Skip the `add-roles` line if not every user should get the app: then
+     assign the role per user (admin console → Users → the user → Role
+     mapping → Assign role → Filter by clients).
+   - Skip the mapper if the app checks no audience.
+   - Keycloak generates the secret. Never read it with kcadm (always pass
+     `--fields` when reading a client); copy it from the admin console
+     (Clients → the client → Credentials) straight into the app's secret
+     store when the app is deployed.
+4. **Check a token**, **on the server**, in the same shell as step 3 (it
+   set `cid`): an example access token for a test user (here the first
+   user). It prints that user's email and name,
+   so keep the output private:
+
+   ```bash
+   kc get clients/$cid/evaluate-scopes/generate-example-access-token -r myapps -q 'scope=openid profile email' -q userId=7df2283a-b1c7-4959-a9ac-e88f71859ba6
+   ```
+
+   `aud` must contain the app's audience, `azp` the client ID,
+   `resource_access` the app's role, and the claims the app reads must be
+   there.
+5. **Check the authorization endpoint**, **on the laptop**. The challenge
+   is the S256 example from RFC 7636; the requests leave `LOGIN_ERROR`
+   events for the two rejected ones:
+
+   ```bash
+   auth=https://auth.finance-nl.com/realms/myapps/protocol/openid-connect/auth
+   q='client_id=finance-tracker&response_type=code&scope=openid&state=test&nonce=test'
+   ok='redirect_uri=https%3A%2F%2Fapp.finance-nl.com%2Flogin%2Foauth2%2Fcode%2Fkeycloak'
+   bad='redirect_uri=https%3A%2F%2Fevil.example%2Flogin%2Foauth2%2Fcode%2Fkeycloak'
+   pkce='code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256'
+   curl -s -o /dev/null -w '%{http_code}\n' "$auth?$q&$ok&$pkce"    # 200: the login page
+   curl -s -o /dev/null -w '%{http_code}\n' "$auth?$q&$bad&$pkce"   # 400: Invalid parameter: redirect_uri
+   curl -s -o /dev/null -w '%{redirect_url}\n' "$auth?$q&$ok"       # back to the app with error=invalid_request: no PKCE
+   ```
+
+6. **Run the smoke test**, **on the laptop**: `deploy/smoke-test.sh`.
+7. **Write it down**: a section for the client in this file (settings and
+   why) and an entry in `change_log.mdx`.
+8. **Once the app is deployed**, sign in through it end to end; the events
+   show `LOGIN` and `CODE_TO_TOKEN` with the app's client ID.
+
+**The public SPA variant**, for a future app that runs only in the browser
+and holds the tokens itself:
+
+- `publicClient` on, no secret. The realm's client policy
+  `pkce-s256-public-clients` sets and enforces PKCE S256 on its own.
+- Redirect URIs: the exact callback page (and silent-renew page, if the
+  OIDC library uses one); web origins: the app's own origin, because the
+  browser calls the token endpoint with CORS; the post-logout URI.
+- The app keeps tokens in memory, not in `localStorage`; refresh-token
+  rotation is already on in the realm.
+- Its API gets a client of its own with every flow off, which holds the
+  roles. The SPA client gets full scope off, a scope mapping to the API
+  client's role (Client scopes → the dedicated scope → Scope → Assign
+  role), and an audience mapper with Included Client Audience set to the
+  API client.
 
 ### Watch registrations and events
 
@@ -426,18 +719,33 @@ User events are kept for 30 days. The quickest view is the admin console
 details include the user's email address and IP. Types worth knowing in
 Keycloak 26:
 
-| Event type                             | Meaning                                                                                                 |
-|----------------------------------------|---------------------------------------------------------------------------------------------------------|
-| `REGISTER`, `REGISTER_ERROR`           | self-registration                                                                                       |
-| `SEND_VERIFY_EMAIL`, `VERIFY_EMAIL`    | confirmation email sent, address confirmed                                                              |
-| `SEND_RESET_PASSWORD`                  | "Forgot password" email sent                                                                            |
-| `UPDATE_CREDENTIAL`, `UPDATE_PASSWORD` | password set or changed (both are logged); `_ERROR` with `password_rejected` when the policy refuses it |
-| `LOGIN`, `LOGIN_ERROR`                 | sign-ins and failed sign-ins                                                                            |
-| `USER_DISABLED_BY_TEMPORARY_LOCKOUT`   | brute-force lockout                                                                                     |
+| Event type                                                      | Meaning                                                                                                                                                     |
+|-----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `REGISTER`, `REGISTER_ERROR`                                    | self-registration                                                                                                                                           |
+| `SEND_VERIFY_EMAIL`, `VERIFY_EMAIL`                             | confirmation email sent, address confirmed                                                                                                                  |
+| `SEND_RESET_PASSWORD`                                           | "Forgot password" email sent                                                                                                                                |
+| `UPDATE_CREDENTIAL`, `UPDATE_PASSWORD`                          | password set or changed (both are logged); `_ERROR` with `password_rejected` when the policy refuses it                                                     |
+| `LOGIN`, `LOGIN_ERROR`                                          | sign-ins and failed sign-ins                                                                                                                                |
+| `USER_DISABLED_BY_TEMPORARY_LOCKOUT`                            | brute-force lockout                                                                                                                                         |
+| `IDENTITY_PROVIDER_FIRST_LOGIN`                                 | first sign-in with a Google or GitHub identity that no user here has yet (detail `identity_provider`)                                                       |
+| `REGISTER` with `register_method` = `broker`                    | a new user created by such a first sign-in                                                                                                                  |
+| `SEND_IDENTITY_PROVIDER_LINK`, `IDENTITY_PROVIDER_LINK_ACCOUNT` | the first sign-in matched an existing user's email: link email sent, link used                                                                              |
+| `FEDERATED_IDENTITY_LINK`, `FEDERATED_IDENTITY_LINK_ERROR`      | an identity linked to a user (first sign-in or account console); the error means it already belongs to another user                                         |
+| `IDENTITY_PROVIDER_LOGIN_ERROR`                                 | Google or GitHub refused the sign-in or the code exchange, for example a wrong client secret                                                                |
+| `LOGIN` with detail `identity_provider`                         | a sign-in through Google or GitHub by a user who already has that identity linked; Keycloak 26 logs no `IDENTITY_PROVIDER_LOGIN` event for a successful one |
 
 In the test on 2026-09-27 a password reset showed up as
 `SEND_RESET_PASSWORD` followed by `UPDATE_PASSWORD` and `UPDATE_CREDENTIAL`;
-there was no `RESET_PASSWORD` event.
+there was no `RESET_PASSWORD` event. In stage 5, linking Google to an
+existing account showed up as `IDENTITY_PROVIDER_FIRST_LOGIN`,
+`SEND_IDENTITY_PROVIDER_LINK`, then (after the email link)
+`IDENTITY_PROVIDER_LINK_ACCOUNT`, `FEDERATED_IDENTITY_LINK` and `LOGIN` with
+the detail `identity_provider` = `google`. A new user from GitHub showed up
+as `IDENTITY_PROVIDER_FIRST_LOGIN`, `REGISTER` and `SEND_VERIFY_EMAIL`. Later
+sign-ins with Google or GitHub showed up only as `LOGIN` with the details
+`identity_provider` and `identity_provider_identity`; the admin console
+can't filter by a detail, but `--fields time,details` on `type=LOGIN` in
+kcadm (below) shows which sign-ins came through a provider.
 
 With kcadm, **on the server** after signing in (see "Admin CLI"); `time` is
 in milliseconds since 1970:
@@ -446,8 +754,13 @@ in milliseconds since 1970:
 kc get events -r myapps -q type=REGISTER -q dateFrom=2026-09-27 -q max=1000 --fields time --format csv --noquotes | wc -l
 kc get events -r myapps -q type=REGISTER -q max=20 --fields time,ipAddress,details
 kc get events -r myapps -q type=LOGIN_ERROR -q max=20 --fields time,error,ipAddress
+kc get events -r myapps -q type=LOGIN -q max=20 --fields time,details
+kc get events -r myapps -q type=IDENTITY_PROVIDER_FIRST_LOGIN -q max=20 --fields time,ipAddress,details
+kc get events -r myapps -q type=IDENTITY_PROVIDER_LOGIN_ERROR -q max=20 --fields time,error,details
 kc get admin-events -r myapps -q max=20 --fields time,operationType,resourceType,resourcePath
 ```
+
+Admin events are kept for 90 days.
 
 The first line counts registrations since 2026-09-27. Error events also go
 to the Keycloak log, **on the server**:
