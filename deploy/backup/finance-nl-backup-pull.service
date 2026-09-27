@@ -1,0 +1,10 @@
+# Laptop, systemd user unit: installed as
+# ~/.config/systemd/user/finance-nl-backup-pull.service by
+# deploy/backup/install.sh laptop.
+[Unit]
+Description=Pull Postgres backups from the finance-nl server
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/finance-nl-backup-pull
+TimeoutStartSec=30min

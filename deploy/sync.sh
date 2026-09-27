@@ -6,7 +6,8 @@
 # Copies the git-tracked files of deploy/ (working tree) to /opt/auth. It never
 # copies or overwrites the files that hold secrets there (.env, realm-export.json);
 # edit those on the server. Files it replaces are kept on the server in
-# /root/auth-sync-backups/<UTC timestamp>/.
+# /root/auth-sync-backups/<UTC timestamp>/. deploy/backup/ is not copied; it is
+# installed with deploy/backup/install.sh.
 # Requires: git, rsync, ssh with key access to root on the server.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -30,8 +31,8 @@ SSH_OPTS=(-o BatchMode=yes -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm-%
 remote() { ssh "${SSH_OPTS[@]}" "$SERVER" "$@"; }
 RSYNC=(rsync -rlpt --checksum --chmod=Fgo-w,Dgo-w -e "ssh ${SSH_OPTS[*]}")
 
-# Tracked files only, minus anything that must stay server-side.
-files=$(git ls-files . | grep -vxF -f <(printf '%s\n' "${PROTECTED[@]}"))
+# Tracked files only, minus anything that must stay server-side and backup/.
+files=$(git ls-files . | grep -v '^backup/' | grep -vxF -f <(printf '%s\n' "${PROTECTED[@]}"))
 excludes=(); for p in "${PROTECTED[@]}"; do excludes+=(--exclude="$p"); done
 
 rev=$(git rev-parse --short HEAD)

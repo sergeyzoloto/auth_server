@@ -1,0 +1,18 @@
+# Installed as /etc/systemd/system/pg-backup@.service. One instance per
+# database: pg-backup@auth.service reads /etc/pg-backup/auth.conf.
+[Unit]
+Description=Postgres backup (%i)
+Documentation=file:///usr/local/sbin/pg-backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pg-backup %i
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=full
+TimeoutStartSec=1h

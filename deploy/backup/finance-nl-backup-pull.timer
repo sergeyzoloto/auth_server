@@ -1,0 +1,15 @@
+# Laptop, systemd user unit: installed as
+# ~/.config/systemd/user/finance-nl-backup-pull.timer by
+# deploy/backup/install.sh laptop. Persistent=true runs a missed pull as soon
+# as the laptop is on (and the user logged in) again. 18:00 local time is
+# 13-14 hours after the server's 02:30 UTC dump, so a single missed server
+# backup already exceeds the 36-hour freshness limit at the next pull.
+[Unit]
+Description=Daily pull of Postgres backups from the finance-nl server
+
+[Timer]
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

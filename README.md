@@ -22,7 +22,8 @@ keycloak-auth-server/
 │   ├── Caddyfile              # TLS, admin IP allowlist, access log
 │   ├── .env.example           # template for /opt/auth/.env on the server
 │   ├── sync.sh                # deploys deploy/ to the server
-│   └── smoke-test.sh          # checks production from the laptop
+│   ├── smoke-test.sh          # checks production from the laptop
+│   └── backup/                # nightly pg_dump, restore test, pull to the laptop (install.sh)
 └── spring-client-example/
     ├── application.yml        # points a Spring service at this realm
     └── SecurityConfig.java    # maps Keycloak roles into Spring authorities

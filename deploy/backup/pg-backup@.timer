@@ -1,0 +1,13 @@
+# Installed as /etc/systemd/system/pg-backup@.timer; enabled per database,
+# e.g. pg-backup@auth.timer. 02:30 UTC runs before the 04:00 UTC window in
+# which unattended-upgrades may reboot the server.
+[Unit]
+Description=Daily Postgres backup (%i)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

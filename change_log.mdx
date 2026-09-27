@@ -2,6 +2,16 @@
 
 ## 2026-09-27
 
+Stage 3: automated Postgres backups with restore test and laptop pull (audit P0-5).
+
+- New `deploy/backup/pg-backup.sh`, installed on the server as `/usr/local/sbin/pg-backup`. One config file per database in `/etc/pg-backup/` (`auth.conf` for Keycloak). It runs `pg_dump -Fc` inside the database container over the local socket (no password), checks the archive with `pg_restore` (non-empty table of contents, and every data block reads back), renames it atomically to `auth-YYYY-MM-DDTHHMMZ.dump` in `/var/backups/pg/auth/`, deletes dumps older than 14 days while always keeping the newest 3, and writes a `last-success` status file. A failed run leaves no file and exits non-zero. Systemd template units `pg-backup@.service` and `pg-backup@.timer` (daily 02:30 UTC, `Persistent=true`, 10-minute random delay); `pg-backup@auth.timer` is enabled.
+- New `deploy/backup/restore-test.sh` (`/usr/local/sbin/pg-restore-test`): restores the newest dump into a throwaway container of the production Postgres image (`--rm`, `--network none`, no ports, no volumes, data on tmpfs), compares the number of tables and the config's checks (realms, users and clients in `myapps`) with production in read-only transactions, removes the container and prints PASS or FAIL.
+- New `deploy/backup/pull-backups.sh` with systemd user units `finance-nl-backup-pull.service` and `.timer` (daily 18:00 local time, `Persistent=true`): the laptop pulls `/var/backups/pg/` into `~/backups/finance-nl-server/` with rsync and a dedicated key, keeps 60 days, and warns with a desktop notification and a non-zero exit when the pull fails or a database's newest dump is older than 36 hours. The server's `authorized_keys` allows that key only `rrsync -ro /var/backups/pg/` with `restrict`; the previous file is kept as `/root/.ssh/authorized_keys.bak-2026-09-27`.
+- New `deploy/backup/install.sh server|laptop` installs these pieces. `deploy/sync.sh` no longer copies `deploy/backup/` to `/opt/auth`.
+- Backup directories are mode 700 and dumps mode 600, on the server and on the laptop.
+- `PRODUCTION.md`: what the backups cover, and a runbook for running a backup, checking the timers, the restore test, restoring production from a dump (documented, not executed), adding the finance database and the laptop pull. README file tree updated.
+- Verified: first backup 250,604 bytes; a failing dump leaves no file, and retention keeps the newest 3 (tested with temporary configs, removed afterwards); restore test PASS (100 tables, 2 realms, 1 user and 10 clients in `myapps`), and FAIL on a truncated dump; the pull key cannot open a shell, run other commands, write, leave `/var/backups/pg/` or forward ports; the first laptop pull matches the server's checksum; the SQL of the documented restore and rollback worked in a throwaway container. Keycloak used 539 MiB of its 1 GiB limit (53%), so the limit is unchanged.
+
 Stage 2: single production setup, admin allowlist, server hardening.
 
 - Repository: `deploy/` is now the only production setup. Removed `docker-compose.prod.yml`, the root `Caddyfile` and the Supabase variant; the env template moved to `deploy/.env.example`. `PRODUCTION.md` rewritten to describe the real setup, with a runbook; README updated.
