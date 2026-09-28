@@ -63,6 +63,41 @@ console or with kcadm (see "Admin CLI"), and the nightly dump covers them.
   is no AAAA record, so normal clients use IPv4. Never put a private range in
   `ADMIN_ALLOWED_IPS`: it would admit every IPv6 client.
 
+### DNS
+
+finance-nl.com's DNS is at Squarespace. `auth.finance-nl.com` and
+`app.finance-nl.com` are A records for `2.28.108.199`, with no AAAA record
+(see IPv6 above). Each of the two names has exactly two CAA records, and
+`finance-nl.com` itself has none (checked 2026-09-28 against the laptop's
+resolver, 1.1.1.1 and 8.8.8.8):
+
+```text
+auth.finance-nl.com.  CAA  0 issue "letsencrypt.org"
+auth.finance-nl.com.  CAA  0 issue "sectigo.com"
+app.finance-nl.com.   CAA  0 issue "letsencrypt.org"
+app.finance-nl.com.   CAA  0 issue "sectigo.com"
+```
+
+- A certificate authority must check CAA before it issues: only these two
+  may issue certificates for `auth.finance-nl.com` and `app.finance-nl.com`.
+- `letsencrypt.org`: Let's Encrypt, Caddy's first issuer. Both current
+  certificates come from it.
+- `sectigo.com`: ZeroSSL, whose certificates Sectigo issues, is Caddy's
+  fallback issuer. In Caddy 2.11.4 the fallback is active only when the
+  Caddyfile sets a global `email` option; `deploy/Caddyfile` sets none, so
+  today Caddy asks only Let's Encrypt (and keeps retrying it). The record
+  lets ZeroSSL issue without a DNS change if `email` is ever added.
+- `finance-nl.com` has no CAA record, so a new name under it has no
+  restriction until it gets its own. Give every new hostname the same two
+  records.
+
+To check, **on the laptop** (every line should show the two records, except
+`finance-nl.com`, which shows none):
+
+```bash
+for r in "" @1.1.1.1 @8.8.8.8; do for n in auth.finance-nl.com app.finance-nl.com finance-nl.com; do echo "$n ${r:-local}: $(dig $r +short CAA $n | sort | tr '\n' ' ')"; done; done
+```
+
 ### Containers ([`deploy/docker-compose.yml`](deploy/docker-compose.yml))
 
 - Images pinned to an exact version and digest.
@@ -116,7 +151,8 @@ Clients: the built-in `account`, `account-console`, `admin-cli`, `broker`,
   `realm-management` role `realm-admin` (every admin right in `myapps`, none
   in `master`). kcadm on the server signs in with it (see "Admin CLI"). No
   redirect URIs and no web origins (the leftover `/*` entries were removed
-  in stage 5; its standard flow is off).
+  in stage 5; its standard flow is off). **Disabled** since 2026-09-28,
+  enabled only for maintenance (see "Maintenance access").
 - `smoke-test`: confidential, `client_credentials` only (no standard flow,
   no direct access grants); its service account has no roles, not even the
   default ones. Only `deploy/smoke-test.sh` uses it.
@@ -513,6 +549,47 @@ IFS= read -rs -p 'smoke-test client secret: ' s; echo
 unset s
 ```
 
+### Maintenance access
+
+`automation-cli` is the only way kcadm on the server gets into realm
+`myapps` (see "Admin CLI" below), and its secret is worth as much as an
+admin password. So it is **disabled by default** (since 2026-09-28): while
+it is off, Keycloak gives it no token, even with the right secret. Its
+secret stays in `/root/automation-cli.secret` on the server the whole time;
+disabling and enabling don't change it.
+
+Before a task that needs it (the kcadm commands in this runbook, or a step
+of the finance runbook that signs in as `automation-cli`):
+
+1. Open the admin console, from an address in `ADMIN_ALLOWED_IPS` (see
+   "Change the admin IP"), and sign in.
+2. Go to realm `myapps` → **Clients** → `automation-cli`, and switch
+   **Enabled** on.
+3. **On the server**, sign in with kcadm and do the task (see "Admin CLI").
+
+Afterwards, disable it again:
+
+4. **On the server**, delete kcadm's session file:
+
+   ```bash
+   docker compose -f /opt/auth/docker-compose.yml exec -T keycloak rm -f /tmp/kcadm.config </dev/null
+   ```
+
+5. In the admin console, realm `myapps` → **Clients** → `automation-cli`,
+   switch **Enabled** off and confirm. (Or, before step 4, let kcadm disable
+   its own client: the last command in "Admin CLI".)
+6. **On the server**, check that it gets no token. The command prints only
+   the HTTP status, never a token: `401` means disabled, `200` means it is
+   still enabled.
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://auth.finance-nl.com/realms/myapps/protocol/openid-connect/token \
+     -d grant_type=client_credentials -d client_id=automation-cli --data-urlencode client_secret@/root/automation-cli.secret
+   ```
+
+While it is disabled, kcadm's sign-in fails with `Invalid client or Invalid
+client credentials [invalid_client]`: enable it first (steps 1 and 2).
+
 ### Admin CLI (kcadm with `automation-cli`)
 
 The confidential client `automation-cli` lets this runbook and scripts
@@ -523,7 +600,9 @@ role `realm-admin`, so the secret is worth as much as an admin password for
 `myapps`; it has no rights in `master`. The secret is in
 `/root/automation-cli.secret` on the server (owner root, mode 600, no
 trailing newline). Never print it; the commands below read it with
-`$(cat …)` inside the server's shell.
+`$(cat …)` inside the server's shell. The client is disabled except during
+maintenance: enable it first, and disable it afterwards (see "Maintenance
+access").
 
 Sign in, **on the server**. The sections below use the `kc` helper; kcadm
 keeps its session in `/tmp/kcadm.config` inside the container:
@@ -574,7 +653,8 @@ unset s
 **Disable it** in the admin console (realm `myapps` → Clients →
 `automation-cli` → Enabled off). New sign-ins fail at once. kcadm can also
 disable its own client, **on the server** after signing in, but then only
-the admin console can turn it back on:
+the admin console can turn it back on (this is how it was disabled on
+2026-09-28):
 
 ```bash
 id=$(kc get clients -r myapps -q clientId=automation-cli --fields id --format csv --noquotes)
@@ -818,9 +898,9 @@ Rules:
   only projects of this server's owner.
 - A site file holds only site blocks for the project's own hostnames: no
   global options block, no `auth.finance-nl.com`, no catch-all address such
-  as `:443` or `https://`. Point the hostname's DNS record at the server
-  before installing the file, because Caddy requests the certificate as
-  soon as it loads the site.
+  as `:443` or `https://`. Point the hostname's DNS record at the server,
+  and give it the two CAA records (see "DNS"), before installing the file,
+  because Caddy requests the certificate as soon as it loads the site.
 
 #### Put a container on `edge`
 
