@@ -61,6 +61,8 @@ exec 9>"/run/lock/pg-backup-$INSTANCE.lock"
 flock -n 9 || die "another backup of '$INSTANCE' is running"
 
 cd "$COMPOSE_DIR"
+# docker compose exec -T passes its stdin on to the container: a call without a
+# file as input gets </dev/null, so it can't read the rest of a script fed to bash.
 dexec() { docker compose exec -T "$SERVICE" "$@"; }
 
 mkdir -p "$BACKUP_DIR"
@@ -71,7 +73,7 @@ find "$BACKUP_DIR" -maxdepth 1 -type f -name ".$INSTANCE-*.tmp" -delete
 log "Backup of '$INSTANCE': database $DB_NAME, service $SERVICE in $COMPOSE_DIR"
 
 waited=0
-until dexec pg_isready -q -U "$DB_USER" -d "$DB_NAME" 2>/dev/null; do
+until dexec pg_isready -q -U "$DB_USER" -d "$DB_NAME" </dev/null 2>/dev/null; do
   [ "$waited" -ge "$READY_TIMEOUT" ] && die "database not ready after ${READY_TIMEOUT}s"
   sleep 10; waited=$((waited + 10))
 done
@@ -87,7 +89,7 @@ trap on_exit EXIT
 tmp=$(mktemp -p "$BACKUP_DIR" --suffix=.tmp ".$INSTANCE-XXXXXX")
 
 started=$SECONDS
-dexec pg_dump -Fc -U "$DB_USER" -d "$DB_NAME" >"$tmp"
+dexec pg_dump -Fc -U "$DB_USER" -d "$DB_NAME" </dev/null >"$tmp"
 size=$(stat -c %s "$tmp")
 [ "$size" -gt 0 ] || die "pg_dump wrote an empty file"
 

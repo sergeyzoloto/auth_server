@@ -54,25 +54,37 @@ else
   ko "token not obtained: $(echo "$resp" | jq -c '{error, error_description}' 2>/dev/null || echo "$resp" | head -c 300)"
 fi
 
-# 7. Negative checks.
-# Wrong client secret -> 401 invalid_client
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$TOKEN_URL" \
-  -d grant_type=client_credentials -d client_id="$CLIENT_ID" -d client_secret="wrong-secret")
-[ "$code" = "401" ] && ok "wrong client_secret rejected (401)" || ko "wrong client_secret: expected 401, got $code"
+# 7. Negative checks. Keycloak 26.7.4 answers both with the error code
+# unauthorized_client, so only the status and error_description tell a
+# rejected secret from a refused grant. The expected answers are exactly
+# Keycloak 26.7.4's; after a Keycloak upgrade, compare them with what it says.
+# expect_error LABEL STATUS DESCRIPTION CURL_ARGS...: the token endpoint must
+# answer with this HTTP status, unauthorized_client and this error_description.
+expect_error() {
+  local label=$1 want_code=$2 want_desc=$3 resp code err desc
+  shift 3
+  resp=$(curl -s -w '\n%{http_code}' --max-time 15 -X POST "$TOKEN_URL" "$@")
+  code=$(tail -n1 <<<"$resp")
+  err=$(sed '$d' <<<"$resp" | jq -r '.error // empty' 2>/dev/null)
+  desc=$(sed '$d' <<<"$resp" | jq -r '.error_description // empty' 2>/dev/null)
+  if [ "$code" = "$want_code" ] && [ "$err" = unauthorized_client ] && [ "$desc" = "$want_desc" ]; then
+    ok "$label ($code $err: $desc)"
+  else
+    ko "$label: expected $want_code unauthorized_client '$want_desc', got $code '$err' '$desc'"
+  fi
+}
 
-# The password grant is off for this client: Keycloak rejects it with
-# unauthorized_client before it looks at the (made-up) username and password.
-# Newer Keycloak versions answer 400, as RFC 6749 requires; accept 401 too and check the body.
-resp=$(curl -s -w '\n%{http_code}' --max-time 15 -X POST "$TOKEN_URL" \
+# A wrong client secret: 401 "Invalid client or Invalid client credentials".
+expect_error "wrong client_secret rejected" 401 "Invalid client or Invalid client credentials" \
+  -d grant_type=client_credentials -d client_id="$CLIENT_ID" -d client_secret="wrong-secret"
+
+# The password grant with the correct secret: this client has direct access
+# grants off, so Keycloak refuses the grant with 400 "Client not allowed for
+# direct access grants" before it looks at the (made-up) username and password.
+# With a wrong CLIENT_SECRET it would answer as above, and this check fails.
+expect_error "password grant refused for $CLIENT_ID" 400 "Client not allowed for direct access grants" \
   -d grant_type=password -d client_id="$CLIENT_ID" -d client_secret="$CLIENT_SECRET" \
-  -d username="smoke-test-no-such-user" -d password="not-a-password")
-code=$(tail -n1 <<<"$resp")
-err=$(head -n1 <<<"$resp" | jq -r '.error // empty' 2>/dev/null)
-if [[ "$code" =~ ^40[01]$ && "$err" == "unauthorized_client" ]]; then
-  ok "password grant rejected for $CLIENT_ID ($code $err)"
-else
-  ko "password grant: expected 400/401 unauthorized_client, got $code '$err'"
-fi
+  -d username="smoke-test-no-such-user" -d password="not-a-password"
 
 # 8. Internal ports must not be visible from the internet
 if command -v nc >/dev/null; then

@@ -328,8 +328,9 @@ The last line lists the providers linked to one user (here the first user).
   network-less container and compares it with production. First run on
   2026-09-27: PASS.
 - Settings per database are in `/etc/pg-backup/auth.conf` (from
-  [`deploy/backup/auth.conf`](deploy/backup/auth.conf)); another database
-  needs only another config file (see "Add the finance database").
+  [`deploy/backup/auth.conf`](deploy/backup/auth.conf)). Finance Tracker's
+  database is backed up the same way as the instance `finance`, with its
+  settings from the finance repository (see "The finance database").
 
 ## Not covered yet
 
@@ -484,9 +485,18 @@ Expected last line: `== Summary: 11 ok, 0 fail ==`. The script needs
 4. JWKS lists signing keys;
 5. `smoke-test` gets a token with `client_credentials`;
 6. the token's `iss` matches the issuer;
-7. a wrong client secret gets 401;
-8. the password grant with `smoke-test` is refused (400 `unauthorized_client`);
+7. a wrong client secret gets 401 `unauthorized_client`, "Invalid client or
+   Invalid client credentials";
+8. the password grant with `smoke-test` and its correct secret is refused
+   with 400 `unauthorized_client`, "Client not allowed for direct access
+   grants";
 9. ports 5432, 8080 and 9000 are closed from outside (three checks).
+
+Keycloak 26.7.4 answers checks 7 and 8 with the same error code, so they
+compare the HTTP status and the `error_description` too: with a wrong
+`CLIENT_SECRET` in `smoke.env`, check 8 gets check 7's answer and fails
+(and so does check 5). After a Keycloak upgrade, compare these two answers
+with what the new version says, and update the script if they changed.
 
 Each run leaves a `CLIENT_LOGIN`, a `CLIENT_LOGIN_ERROR` and a `LOGIN_ERROR`
 event in `myapps`; the two errors also appear as WARN lines in the Keycloak
@@ -533,7 +543,7 @@ When you are done, delete the session file, **on the server** (recreating
 the container deletes it too):
 
 ```bash
-docker compose -f /opt/auth/docker-compose.yml exec -T keycloak rm -f /tmp/kcadm.config
+docker compose -f /opt/auth/docker-compose.yml exec -T keycloak rm -f /tmp/kcadm.config </dev/null
 ```
 
 **Rotate the secret**, **on the server**, after signing in. The old secret
@@ -754,9 +764,17 @@ brings two things, both from its own repository and runbook:
 
 - a site file, installed with `caddy-site install` as
   `/opt/caddy-sites/finance.caddy`. The Caddyfile imports every
-  `/opt/caddy-sites/*.caddy`, mounted read-only at `/etc/caddy/sites`;
+  `/opt/caddy-sites/*.caddy`, mounted read-only at `/etc/caddy/sites`.
+  Finance Tracker's is `deploy/finance.caddy` in its repository;
 - the containers Caddy proxies to, attached to the Docker network `edge`
-  under names that start with the project's name.
+  under names that start with the project's name. Finance Tracker's are
+  `finance-tracker-api` (its Spring backend) and `finance-tracker-web`
+  (nginx with the built frontend).
+
+The finance repository's `deploy/RUNBOOK.md` is the source of truth for how
+Finance Tracker runs: its compose file, site file, deploys, updates and
+backups. This section holds the rules every project follows here, and the
+tools this repository provides (`caddy-site`, the network `edge`).
 
 Rules:
 
@@ -783,18 +801,18 @@ Rules:
 - Keycloak and Postgres are not on `edge`. A project's backend reaches
   Keycloak at `https://auth.finance-nl.com`, through the server's public
   address, like any other client.
-- **Names on `edge`:** every container on `edge` is named with its
-  project's name as a prefix, `finance-` for Finance Tracker (its backend is
-  `finance-tracker-backend`), and site files proxy only to such names. The
-  prefix `auth-` is reserved for this stack. Docker's DNS answers a name
-  from every network a container is on, so a container on `edge` can take
-  over a name that Caddy uses. Caddy reaches Keycloak as `auth-keycloak`, an
-  alias on this stack's own network only, so a container on `edge` named
-  `keycloak` gets none of its traffic, whichever network Docker checks first
-  (tested 2026-09-27). One named `auth-keycloak` on `edge` would get it as
-  soon as Docker checked `edge` first; Docker orders the networks by name,
-  and today `auth_default` comes first. The reserved prefix prevents that
-  case.
+- **Names on `edge`:** every container on `edge` is named with its project's
+  name as a prefix, `finance-` for Finance Tracker (its containers there are
+  `finance-tracker-api` and `finance-tracker-web`), and site files proxy
+  only to such names. The prefix `auth-` is reserved for this stack.
+  Docker's DNS answers a name from every network a container is on, so a
+  container on `edge` can take over a name that Caddy uses. Caddy reaches
+  Keycloak as `auth-keycloak`, an alias on this stack's own network only, so
+  a container on `edge` named `keycloak` gets none of its traffic, whichever
+  network Docker checks first (tested 2026-09-27). One named `auth-keycloak`
+  on `edge` would get it as soon as Docker checked `edge` first; Docker
+  orders the networks by name, and today `auth_default` comes first. The
+  reserved prefix prevents that case.
 - Every container on `edge` can reach Caddy and every other container on
   it. Attach only the containers Caddy proxies to, never a database, and
   only projects of this server's owner.
@@ -806,73 +824,65 @@ Rules:
 
 #### Put a container on `edge`
 
-In the project's own compose file, give each container Caddy proxies to an
-alias on `edge` with the project's prefix. Finance Tracker's
-`/opt/finance-tracker/deploy/app/docker-compose.yml`:
+In the project's own compose file, give each container Caddy proxies to a
+name with the project's prefix, and put it on `edge`. Finance Tracker does
+it with a fixed `container_name` (its `deploy/app/docker-compose.yml`,
+abridged): the backend joins its stack's network and `edge`, the frontend
+only `edge`, and the database `finance-tracker-postgres` stays off `edge`.
 
 ```yaml
 services:
-  backend:
-    networks:
-      default:
-      edge:
-        aliases: [finance-tracker-backend]
+  api:
+    container_name: finance-tracker-api
+    networks: [default, edge]
+  web:
+    container_name: finance-tracker-web
+    networks: [edge]
 
 networks:
   edge:
     external: true
 ```
 
-Compose also gives the container its service name (`backend`) on `edge`,
-which another project may use too, so a site file uses only the alias. Then
-**on the server**:
+An alias on `edge` (`networks: {edge: {aliases: [...]}}`) works too, but a
+container name is unique on the whole host, an alias is not. Compose also
+gives each container its service name (`api`, `web`) on `edge`, which
+another project may use too, so a site file uses only the prefixed names.
+After `docker compose up -d` in the project's directory, **on the server**:
 
 ```bash
-cd /opt/finance-tracker/deploy/app && docker compose up -d
 docker network inspect edge -f '{{range .Containers}}{{.Name}} {{end}}'
-cd /opt/auth && docker compose exec caddy getent ahostsv4 finance-tracker-backend | awk '{print $1}' | sort -u
+cd /opt/auth && for n in finance-tracker-api finance-tracker-web; do echo "$n: $(docker compose exec -T caddy getent ahostsv4 $n </dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"; done
 ```
 
-The second command lists `auth-caddy-1` and
-`finance-tracker-prod-backend-1` among the containers on `edge`. The third
-must print exactly one address: two mean another container uses the name;
-none means the container is not on `edge` or not running.
+The first command lists `auth-caddy-1`, `finance-tracker-api` and
+`finance-tracker-web`, and no database. The second must print exactly one
+address per name: two mean another container uses the name; none means the
+container is not on `edge` or not running. Finance Tracker's runbook runs
+the same checks in step 6, "Build and start the app".
 
 #### Add or change a site
 
 A site file holds complete site blocks for the project's hostnames and
-proxies to its aliases on `edge`. Its name is the site's name plus
+proxies to its prefixed names on `edge`. Its name is the site's name plus
 `.caddy`, in lowercase letters, digits and dashes: `finance.caddy` for the
-site `finance`. The shape of Finance Tracker's (`finance-tracker-web` stands
-for the app's container that serves the built frontend):
-
-```caddyfile
-# Finance Tracker: https://app.finance-nl.com
-app.finance-nl.com {
-    encode zstd gzip
-
-    # The backend's API, login (its start and Keycloak's callback) and logout.
-    @backend path /api/* /oauth2/* /login/oauth2/* /logout
-    handle @backend {
-        reverse_proxy finance-tracker-backend:8080
-    }
-
-    # Every other path: the single-page app.
-    handle {
-        reverse_proxy finance-tracker-web:8080
-    }
-}
-```
-
-The project's own response headers (HSTS, CSP) belong in the same file.
+site `finance`. The file lives in the project's repository. Finance
+Tracker's is `deploy/finance.caddy` in its repository: it sends `/api`,
+`/api/*`, `/oauth2/*`, `/login/oauth2/*` and `/logout` to
+`finance-tracker-api:8080` and every other path to
+`finance-tracker-web:8080`, and sets the app's own response headers (HSTS,
+CSP and others). Its runbook checks the file on the laptop with
+`deploy/check-site.sh`, the way `caddy-site` will, before it is committed.
 Sites imported this way have no access log unless the file adds a `log`
 block like the one in `deploy/Caddyfile`.
 
 **On the server**, copy the file from the project's clone to `/root` under
-the site's name, then install it:
+the site's name, then install it. For Finance Tracker (its runbook does
+this in step 7, "Put the site live", and in "Update the app" when the file
+changed):
 
 ```bash
-cp /opt/finance-tracker/deploy/caddy/app.finance-nl.com.caddy /root/finance.caddy
+cp /opt/finance-tracker/deploy/finance.caddy /root/finance.caddy
 caddy-site install /root/finance.caddy
 ```
 
@@ -906,8 +916,11 @@ caddy-site install /root/finance.caddy
   if the running Caddy still has an older `/opt/auth/Caddyfile` (then
   restart it first: `cd /opt/auth && docker compose restart caddy`).
 
-To change a site later, edit `/root/finance.caddy` and run the same
-`caddy-site install /root/finance.caddy`.
+To change a site later, change the file in the project's repository, bring
+the server's clone up to date, and copy and install it again as above. For
+Finance Tracker, its runbook's "Change the site file" and "Update the app"
+cover this. Editing `/root/finance.caddy` directly would leave the live site
+different from its repository.
 
 Check the result. **On the server**, Caddy's messages since the install
 (for a new hostname, a `certificate obtained successfully` line for
@@ -939,10 +952,11 @@ prints `✅ Site finance removed. The file is kept as …`. If Caddy rejected
 the configuration without the file, it puts the file back and says so.
 **On the laptop**,
 `curl -s -o /dev/null -w '%{http_code}\n' https://app.finance-nl.com/` now
-prints `000`: Caddy no longer has a certificate for the name. Then remove
-the `edge` entries from the project's compose file and, **on the server**,
-`cd /opt/finance-tracker/deploy/app && docker compose up -d`, and remove the
-DNS record. The old certificate stays in `auth_caddy_data` until it expires;
+prints `000`: Caddy no longer has a certificate for the name. Then take the
+project's containers off `edge` (in its own compose file, or by stopping the
+project the way its runbook says; never `docker compose down -v`, which
+deletes its database) and remove the DNS record. The old certificate stays
+in `auth_caddy_data` until it expires;
 Caddy no longer renews it. Leave `edge` and `/opt/caddy-sites` in place.
 
 To switch a site off for a while instead, run `caddy-site remove finance`
@@ -1037,6 +1051,7 @@ certificates.
 | Dumps, 14 days (`pg_dump -Fc`)         | on the server: `/var/backups/pg/auth/`, e.g. `auth-2026-09-27T1258Z.dump` (UTC time)                    |
 | Time, file and size of the last dump   | on the server: `/var/backups/pg/auth/last-success`                                                      |
 | Settings for the `auth` database       | on the server: `/etc/pg-backup/auth.conf` (from `deploy/backup/auth.conf`)                              |
+| Settings for the `finance` database    | on the server: `/etc/pg-backup/finance.conf` (from the finance repository; see "The finance database")  |
 | Backup and restore-test scripts        | on the server: `/usr/local/sbin/pg-backup`, `/usr/local/sbin/pg-restore-test`                           |
 | Units                                  | on the server: `/etc/systemd/system/pg-backup@.service`, `/etc/systemd/system/pg-backup@.timer`         |
 | Copies, 60 days                        | on the laptop: `~/backups/finance-nl-server/auth/`                                                      |
@@ -1050,7 +1065,7 @@ certificates.
 there, **on the laptop**:
 
 ```bash
-deploy/backup/install.sh server   # scripts, units and every deploy/backup/*.conf; enables pg-backup@auth.timer
+deploy/backup/install.sh server   # scripts, units and every deploy/backup/*.conf; enables pg-backup@auth.timer; leaves finance.conf alone
 deploy/backup/install.sh laptop   # pull script and its user timer on this laptop
 ```
 
@@ -1141,7 +1156,7 @@ cd /opt/auth && docker compose stop keycloak
 # 5. Keep the current database under another name and create an empty one
 docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U keycloak -d postgres \
   -c 'ALTER DATABASE keycloak RENAME TO keycloak_before_restore' \
-  -c 'CREATE DATABASE keycloak OWNER keycloak'
+  -c 'CREATE DATABASE keycloak OWNER keycloak' </dev/null
 
 # 6. Restore in one transaction, stopping at the first error
 docker compose exec -T postgres pg_restore -U keycloak -d keycloak --exit-on-error --single-transaction < "$dump"
@@ -1165,7 +1180,7 @@ previous database, **on the server**:
 cd /opt/auth && docker compose stop keycloak
 docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U keycloak -d postgres \
   -c 'DROP DATABASE IF EXISTS keycloak' \
-  -c 'ALTER DATABASE keycloak_before_restore RENAME TO keycloak'
+  -c 'ALTER DATABASE keycloak_before_restore RENAME TO keycloak' </dev/null
 docker compose start keycloak
 systemctl start pg-backup@auth.timer
 ```
@@ -1173,7 +1188,7 @@ systemctl start pg-backup@auth.timer
 Once the restored state has worked for a few days, **on the server**:
 
 ```bash
-cd /opt/auth && docker compose exec -T postgres psql -X -U keycloak -d postgres -c 'DROP DATABASE keycloak_before_restore'
+cd /opt/auth && docker compose exec -T postgres psql -X -U keycloak -d postgres -c 'DROP DATABASE keycloak_before_restore' </dev/null
 ```
 
 If the server or the volume is lost, the dump comes from the laptop. Build
@@ -1191,36 +1206,43 @@ and follow the steps above with `dump=/root/auth-2026-09-27T1258Z.dump`. In
 step 2 the comparison then fails, because "production" is the new, empty
 realm; there only the restore itself (`Restored in …`) counts.
 
-#### Add the finance database
+#### The finance database
 
-For the finance app's own Postgres, running under Docker Compose on this
-server:
+Finance Tracker's own Postgres (container `finance-tracker-postgres`, compose
+project `finance-tracker-prod`) is backed up by the same `pg-backup` and
+`pg-restore-test`, as the instance `finance`: timer
+`pg-backup@finance.timer`, dumps in `/var/backups/pg/finance/`, settings in
+`/etc/pg-backup/finance.conf`. That settings file belongs to the finance
+repository, not this one: it is `deploy/pg-backup/finance.conf` there
+(`COMPOSE_DIR=/opt/finance-tracker/deploy/app`, `SERVICE=postgres`,
+database and user `finance`, and `CHECK_*` lines that fit its schema).
+Its runbook, `deploy/RUNBOOK.md`, installs it and enables the timer in
+step 9, "Backups", and covers its restore test and its restore from a
+dump. Change it there, never here.
 
-1. **On the laptop**, copy `deploy/backup/auth.conf` to
-   `deploy/backup/finance.conf` and set `COMPOSE_DIR` (the finance compose
-   directory, for example `/opt/finance`), `SERVICE` (its Postgres service),
-   `DB_NAME` and `DB_USER` (`POSTGRES_DB` and `POSTGRES_USER` in its compose
-   file) and `BACKUP_DIR=/var/backups/pg/finance`. Replace the `CHECK_*`
-   lines with read-only counts that fit the finance schema, or delete them
-   (then only the number of tables is compared). Commit it.
-2. **On the laptop**: `deploy/backup/install.sh server`. It installs
-   `/etc/pg-backup/finance.conf` and enables `pg-backup@finance.timer`.
-3. **On the server**:
+`deploy/backup/install.sh server` installs only this repository's
+`deploy/backup/*.conf` (today only `auth.conf`) and enables only their
+timers: it never overwrites or removes `/etc/pg-backup/finance.conf` and
+leaves `pg-backup@finance.timer` alone. So never add a `finance.conf` to
+`deploy/backup/`. The scripts it installs, `/usr/local/sbin/pg-backup` and
+`/usr/local/sbin/pg-restore-test`, serve both instances: after changing
+them, run the restore test for both, **on the server**:
 
-   ```bash
-   systemctl start pg-backup@finance.service
-   journalctl -u pg-backup@finance.service -n 10 --no-pager
-   pg-restore-test finance
-   ```
+```bash
+pg-restore-test auth
+pg-restore-test finance
+```
 
-4. Nothing changes on the laptop: the next pull copies
-   `/var/backups/pg/finance/` and checks its freshness too. To pull at once,
-   **on the laptop**: `systemctl --user start finance-nl-backup-pull.service`.
+Both end with `PASS`. The laptop's pull already copies
+`/var/backups/pg/finance/` and checks its freshness too.
 
-`pg_dump` runs inside the container over the local socket, which the
-official `postgres` image allows without a password. Restoring the finance
-database works like the steps above, with its compose directory, service,
-database and user.
+Another project's database follows the same pattern: a `NAME.conf` in the
+format of [`deploy/backup/auth.conf`](deploy/backup/auth.conf), kept in that
+project's repository and installed by its runbook as
+`/etc/pg-backup/NAME.conf` (root, mode 600), with
+`systemctl enable --now pg-backup@NAME.timer`. `pg_dump` runs inside the
+container over the local socket, which the official `postgres` image allows
+without a password.
 
 #### The laptop pull
 
@@ -1291,7 +1313,8 @@ An upgrade of `docker-ce` restarts the Docker daemon and with it the
 containers (about a minute without logins). If a reboot is needed, run
 `reboot` or leave it to the 04:00 automatic reboot. Afterwards, **on the
 laptop**: `deploy/smoke-test.sh`. In the same monthly session, run the
-restore test (**on the server**: `pg-restore-test auth`).
+restore test (**on the server**: `pg-restore-test auth` and
+`pg-restore-test finance`).
 
 Keycloak, Postgres and Caddy versions change only when the image lines in
 `deploy/docker-compose.yml` are edited. For an upgrade, run a backup first

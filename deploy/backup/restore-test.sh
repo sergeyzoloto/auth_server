@@ -85,9 +85,11 @@ pgdata=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$i
 [ -n "$pgdata" ] || die "image $image_ref has no PGDATA"
 
 # Read-only against production: every statement runs in a read-only transaction.
+# docker compose exec -T passes its stdin on to the container; </dev/null keeps it
+# from reading the rest of a script fed to bash, for example over SSH.
 q_prod() {
   docker compose exec -T -e PGOPTIONS='-c default_transaction_read_only=on' "$SERVICE" \
-    psql -X -q -v ON_ERROR_STOP=1 -At -U "$DB_USER" -d "$DB_NAME" -c "$1"
+    psql -X -q -v ON_ERROR_STOP=1 -At -U "$DB_USER" -d "$DB_NAME" -c "$1" </dev/null
 }
 q_copy() { docker exec "$name" psql -X -q -v ON_ERROR_STOP=1 -At -U "$DB_USER" -d "$DB_NAME" -c "$1"; }
 
