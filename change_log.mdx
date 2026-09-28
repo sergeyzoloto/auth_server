@@ -2,6 +2,56 @@
 
 ## 2026-09-28
 
+D4-IR: incident review of the runbook text that ran on production during D4, and production safety rules. This review changed nothing on the server.
+
+- What ran: at 15:42:30 UTC D4 extracted "one command" with `sed -n "/^   curl -s -o \/dev\/null -w '%{http_code}/,/client_secret@/p" PRODUCTION.md | sed 's/^   //'` into a variable and sent it to the server as `ssh … "$cmd" </dev/null`. The range ended at line 587 as intended, but started again at line 809 and, with no later end line, ran to the end of the file. So the server's bash (5.3.9, as `bash -c`) got lines 586–587 and 809–1421 of `PRODUCTION.md` as of `ec66c82`, which was the working copy at that moment.
+- Stdin: the text was an argument, not a script on stdin, and stdin was `/dev/null`. No command could read runbook lines as its input; every read got end of file. The range has no `read` (the `read -rs` lines are 547, 648 and 695) and no heredoc, so no secret file was written.
+- How prose ran: a code fence has three backticks. After each closing fence, bash read the prose up to the next opening fence as one command. The inline code became its words, and the prose between them ran as command substitutions: 284 commands. This was found by parsing the text with the same bash in a throwaway container, without running it. All of them were English words or Markdown leftovers ("command not found") except:
+  - the `.` builtin with a prose word as its file (nothing to source);
+  - `/usr/bin/unattended-upgrades skips` (line 574): a real unattended-upgrades run at 15:43:32, which found nothing to install.
+- Near misses:
+  - The prose around "Never run `docker compose down -v`, `docker volume rm` or `docker system prune --volumes`" became the command `docker compose down -vdocker volume rmdocker system prune --volumes…` in `/opt/auth`. Compose rejected the flag (`unknown shorthand flag: 'd' in -docker`, reproduced with the same Compose 5.5.1) before doing anything.
+  - `reboot` was only a piece of a command name that doesn't exist.
+  - Lines 599–615 never ran: a backtick that never closes made the last command a syntax error.
+- Effects, checked against the journal, container start times, the Postgres and Keycloak logs and the database:
+  - `finance.caddy` reinstalled (unchanged), removed and reinstalled with identical content: `app.finance-nl.com` without its site for about 1 s at 15:42:35, two archive directories under `/root/caddy-sites-removed/`, and `/root/finance.caddy` rewritten with the same content. A `caddy-site` call with 7 junk arguments stopped at its usage check.
+  - Keycloak restarted, then the whole auth stack. Keycloak was down 15:42:37–15:42:51 and 15:43:11–15:43:35, and Caddy restarted at 15:42:38.
+  - Two extra dumps (`auth-2026-09-28T1542Z`, `…T1543Z`) and five restore tests in throwaway containers (four for auth, one for finance).
+  - The steps of "Restore production from a dump", then its rollback. The original `keycloak` database is back (same OID, no leftover database), and Keycloak ran on the restored copy for 0.38 s without logging anything. `pg-backup@auth.timer` was stopped and started.
+  - `apt-get update`, and `apt-get upgrade` of `python3-requests` and `python3-jwt` from the security pocket, which the nightly unattended upgrade would have installed. Nothing in `/etc` changed, no service restarted, and no reboot is needed.
+  - The laptop pull key's line was removed from `/root/.ssh/authorized_keys`, and an unused key pair `/root/.ssh/finance-nl-backup` was created. Two SSH connections from the server to itself failed at authentication, so nothing was added to `authorized_keys`.
+  - Nothing else: no crontab, at job, lingering or user unit, and no other file changed in `/etc`, `/root`, `/opt`, `/usr/local`, `/var/backups`, `/home` or `/var/spool`.
+- Corrections to the D4 entry below:
+  - `docker compose down -v` and `reboot` were not kept from running by quoting but as described above;
+  - `docker compose restart caddy` did not run;
+  - auth was down for 14 s and 24 s, not about two minutes;
+  - D4 did not list the unattended-upgrades run, `apt-get update`, the restore tests or the SSH connections.
+- Restored by the owner, not by this review:
+  - the pull key's line, at 17:34:55;
+  - the removal of the stray key pair, at 17:37:01.
+
+  Verified: the line is there exactly once, with `restrict,command="/usr/bin/rrsync -ro /var/backups/pg/"` and the laptop key's fingerprint, and the pair is gone.
+- Verified read-only after the incident:
+  - secret files unchanged since 2026-09-27 (the finance `.env` since its deploy), and `ADMIN_ALLOWED_IPS` as expected;
+  - sshd, ufw, fail2ban, swap, unattended-upgrades and both backup timers as set up in stages 2 and 3;
+  - the deployed files byte-identical to `caf47e2`, and the images at their pinned digests;
+  - `/opt/caddy-sites/finance.caddy` identical to the finance repository's file;
+  - realm `myapps`, read from the database, equal to a snapshot taken before the incident and to stages 4 and 5, apart from D4's intended disabling of `automation-cli` (still disabled).
+- Checked with the owner:
+  - admin console sign-in;
+  - a "Forgot password" email, which uses the SMTP key in the vault;
+  - Google and GitHub sign-in to the finance app, which use the providers' secrets in the vault.
+
+  Smoke test 11 ok / 0 fail. The laptop pull reported "OK: all backups are fresh".
+- Left as they are: the two archive directories (identical copies) and the extra dumps (14-day rotation).
+- New `CLAUDE.md` with the section "Production safety":
+  - never run text extracted from a file on a server;
+  - write server commands out, and never pipe files or heredocs into a remote shell;
+  - never run state-changing runbook sections as a test;
+  - production is read-only by default.
+
+  The finance repository's `CLAUDE.md` has the same section.
+
 D4: cleanup after the finance app launch (docs, backup scripts, smoke test).
 
 - `PRODUCTION.md`, "Hosting another project behind this Caddy": now describes how Finance Tracker actually runs and points to its repository's `deploy/RUNBOOK.md` as the source of truth. Its containers on `edge` are `finance-tracker-api` and `finance-tracker-web`, named with a fixed `container_name` (the database `finance-tracker-postgres` stays off `edge`), not the alias `finance-tracker-backend`; its site file is `deploy/finance.caddy` in the finance repository, not `deploy/caddy/app.finance-nl.com.caddy`. The duplicated site file example is replaced by a summary of its routes; the name check on `edge` covers both containers; a site is changed in the project's repository, not by editing `/root/finance.caddy`.
