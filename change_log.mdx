@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-02
+
+- Monthly update routine (Docker packages), on the server: `apt-get update` /
+  `upgrade` installed `docker-ce`, `docker-ce-cli`, `docker-ce-rootless-extras`
+  (29.8.1 → 29.8.2) and the security updates `openssl`, `libssl3t64`,
+  `openssl-provider-legacy` (3.5.5-1ubuntu3.6 → .7), plus
+  `ubuntu-release-upgrader-core` and `python3-distupgrade`. `linux-image-virtual`
+  was kept back by `upgrade` (needs `dist-upgrade`); no reboot required. The
+  docker-ce restart recycled the three containers (auth-caddy-1,
+  auth-keycloak-1, auth-postgres-1), all healthy within a minute. Smoke test
+  on the laptop: 11 ok, 0 fail. Restore test (`pg-restore-test`) not run this
+  session.
+
 ## 2026-09-28
 
 D4-IR: incident review of the runbook text that ran on production during D4, and production safety rules. This review changed nothing on the server.
