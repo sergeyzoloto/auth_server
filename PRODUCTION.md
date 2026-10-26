@@ -113,7 +113,11 @@ for r in "" @1.1.1.1 @8.8.8.8; do for n in auth.finance-nl.com app.finance-nl.co
   only on the stack's own network `auth_default`. There Keycloak also has
   the alias `auth-keycloak`, Caddy's upstream: the prefix `auth-` is
   reserved for this stack, so no container on `edge` can share the name.
-- Log rotation for every container: `json-file`, 10 MB × 5 files.
+- Every container logs to the host's journal (`journald` driver, tag = the
+  container's name, since OPS-3 of the finance repository, 2026-10): the
+  journal keeps 14 days (see "Host"). `docker compose logs` reads it as
+  before. Until OPS-3 it was `json-file`, 10 MB × 5 files per container,
+  kept for as long as those 50 MB lasted, months for Caddy's access log.
 - Compose project name fixed to `auth`, so the volumes stay `auth_*`
   whatever the directory is called.
 - Keycloak runs `start` without `--import-realm`, with the file vault
@@ -335,6 +339,24 @@ The last line lists the providers linked to one user (here the first user).
   04:00 UTC when an update needs it
   (`/etc/apt/apt.conf.d/52unattended-upgrades-local`). It does not cover the
   Docker packages from `download.docker.com`; see the monthly routine below.
+- Logs are kept 14 days (OPS-3, D-277 of the finance repository; its
+  `deploy/RUNBOOK.md`, "Logs", holds every file's text and the way back):
+  - the journal: `/etc/systemd/journald.conf.d/60-retention.conf`,
+    `Storage=persistent`, `MaxRetentionSec=14day`, `MaxFileSec=1day`, so
+    nothing older than 15 days stays, and `SystemMaxUse=1G` as a safety
+    limit. Every container of both stacks logs there, and so do sshd,
+    fail2ban's sshd jail (it reads the journal) and the kernel (ufw's
+    blocks);
+  - rsyslog's files (`/var/log/syslog`, `auth.log`, `kern.log`, …, a copy of
+    the journal), `fail2ban.log`, `btmp` and `wtmp`: rotated daily, 13 old
+    files, `maxage 14` (their `/etc/logrotate.d/` files; the package's
+    originals are in `/root/ops3-before/`);
+  - fail2ban's database forgets bans after a day (`dbpurgeage`, the package's
+    default);
+  - Keycloak's user events 30 days and admin events 90 days, in its database
+    (realm `myapps`, unchanged).
+- Hetzner's Backups of the whole server since OPS-3: 7 daily backups (see
+  "Backups").
 
 ### Backups ([`deploy/backup/`](deploy/backup/))
 
@@ -363,6 +385,15 @@ The last line lists the providers linked to one user (here the first user).
 - `pg-restore-test auth` restores the newest dump into a throwaway,
   network-less container and compares it with production. First run on
   2026-09-27: PASS.
+- Hetzner's Backups (since OPS-3, D-275 of the finance repository; its
+  `deploy/RUNBOOK.md`, "Hetzner's backups of the server"): a daily copy of the
+  whole disk, taken while the server runs, so the databases in it are
+  crash-consistent, kept 7 days, in the same location as the server. It is
+  for a lost or broken server; a database is restored from its nightly dump,
+  as below.
+- Every run prints the restore test of its own dump, ready to paste
+  (`Restore test of this dump: pg-restore-test auth /var/backups/pg/auth/…`,
+  OPS-3, the finance repository's D-216 and D-279).
 - Settings per database are in `/etc/pg-backup/auth.conf` (from
   [`deploy/backup/auth.conf`](deploy/backup/auth.conf)). Finance Tracker's
   database is backed up the same way as the instance `finance`, with its
@@ -370,13 +401,16 @@ The last line lists the providers linked to one user (here the first user).
 
 ## Not covered yet
 
-- **Backups beyond the laptop.** The only copy off the server is on the
-  laptop, and it is only as recent as the last pull: if the server is lost,
-  everything since then is lost too. A laptop that stays off for more than
-  14 days also leaves gaps in its history. There is no second off-site copy,
-  and Hetzner's server backups are off.
-- Monitoring and alerting. Events are stored in `myapps` (see above), but
-  nothing reports on them.
+- **Backups beyond the laptop.** The copies off the server are the
+  laptop's, as recent as the last pull, and since OPS-3 Hetzner's daily
+  backups of the whole server, in the same location as the server (not
+  off-site in the strict sense). A laptop that stays off for more than 14
+  days leaves gaps in its history.
+- Alerting on events. The finance repository's monitor
+  (`.github/workflows/monitor.yml`, since OPS-3) checks every 15 minutes that
+  the realm answers with its issuer and that both certificates have 14 days
+  left, and GitHub emails a failure. Events are stored in `myapps` (see
+  above), but nothing reports on them.
 - **Spam registrations.** Registration is open with no captcha and no rate
   limit; only the email confirmation stands in the way. Watch the `REGISTER`
   events (see "Watch registrations and events") and add a captcha if bots
@@ -417,7 +451,16 @@ Edit files in `deploy/`, commit, then **on the laptop**:
 ```bash
 deploy/sync.sh --dry-run   # which files would change, with diffs; checks the compose file against the server's .env and the Caddyfile with the site files
 deploy/sync.sh             # the same, asks, copies, runs docker compose up -d, waits until healthy
+deploy/sync.sh --copy-only # the same checks, asks, copies; starts and restarts nothing
 ```
+
+`--copy-only` (OPS-3) is for a change that recreates containers, such as the
+logging driver: it copies the files and lists the containers, which keep
+their settings until each is recreated by hand, at the planned moment and in
+the planned order (`docker compose up -d --force-recreate --no-deps
+SERVICE`; for OPS-3 the finance repository's checklist). Until then, a
+plain `sync.sh` or `docker compose up -d` would recreate every container
+that differs at once.
 
 `sync.sh` copies the git-tracked files of `deploy/` to `/opt/auth`, never
 `.env` or `vault/`. It warns when `deploy/` has uncommitted changes. Before
@@ -493,7 +536,13 @@ docker compose logs --since 1h postgres
 docker compose logs -f caddy               # JSON access log plus Caddy's own messages
 fail2ban-client status sshd                # failed SSH logins and current bans
 journalctl -u ssh --since today
+journalctl -t auth-keycloak-1 --since -1h  # a container's lines in the journal, also after it was recreated
+journalctl CONTAINER_NAME=auth-caddy-1 -o cat --since today   # the same, by Docker's field
 ```
+
+Since OPS-3 the containers log to the journal (14 days). `docker compose
+logs` reads only the current container's lines; the journal keeps those of
+a container that was recreated or removed, for the same 14 days.
 
 The server has no `jq`. To read the access log **on the laptop**:
 
@@ -1160,7 +1209,9 @@ journalctl -u pg-backup@auth.service -n 10 --no-pager
 ```
 
 A good run ends with `Wrote /var/backups/pg/auth/auth-….dump: … bytes, …
-archive entries` and `OK: … dumps in /var/backups/pg/auth`. A failed run
+archive entries`, `Restore test of this dump: pg-restore-test auth
+/var/backups/pg/auth/auth-….dump` (since OPS-3) and `OK: … dumps in
+/var/backups/pg/auth`. A failed run
 exits non-zero, `systemctl start` reports it, and no new file is left behind.
 
 #### Check the timers and the last backup

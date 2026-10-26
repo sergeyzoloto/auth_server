@@ -103,6 +103,9 @@ dexec pg_restore -f /dev/null <"$tmp"
 final="$BACKUP_DIR/$INSTANCE-$(date -u +%Y-%m-%dT%H%MZ).dump"
 mv -f "$tmp" "$final"
 log "Wrote $final: $size bytes, $entries archive entries, $((SECONDS - started))s"
+# The ready line for this dump's restore test (finance repository's D-216 and D-279, OPS-3): a checklist names the dump
+# it tests, never "the newest one", which another run may have replaced by then.
+log "Restore test of this dump: pg-restore-test $INSTANCE $final"
 
 # Retention: delete dumps older than RETENTION_DAYS, except the newest KEEP_MIN.
 cutoff=$(date -d "-$RETENTION_DAYS days" +%s)

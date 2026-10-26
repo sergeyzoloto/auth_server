@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-10-26
+
+OPS-3 of the finance repository (its `docs/family-budget/requirements.md`, D-273 to D-279 and the agent's D-280 to
+D-291; its `deploy/RUNBOOK.md`, "OPS-3's deploy checklist"): logs kept 14 days, Hetzner's backups, the external
+monitor. Nothing deployed and nothing changed on the server: the finance checklist installs this commit.
+
+- Decisions that touch this repository: D-275 (Hetzner's 7 daily backups of the server), D-277 (every container of
+  both stacks logs to the journal, which keeps 14 days; every recreation a planned checklist step), D-279 (`pg-backup`
+  prints the ready restore line for its own dump, the finance repository's D-216), D-286 (`sync.sh --copy-only`, so
+  that no recreation is an implicit `docker compose up -d`).
+- `deploy/docker-compose.yml`: `x-logging` is the `journald` driver with the tag `{{.Name}}` (the journal's
+  `SYSLOG_IDENTIFIER`), in place of `json-file` 10 MB × 5. A container takes it only when recreated.
+- `deploy/sync.sh --copy-only`: the same checks and question, the copy and `caddy-site`'s install, then the
+  containers listed and nothing started, recreated or restarted.
+- `deploy/backup/pg-backup.sh`: after `Wrote …`, the line `Restore test of this dump: pg-restore-test INSTANCE
+  /var/backups/pg/INSTANCE/INSTANCE-….dump`. `last-success` is as before (the finance repository's `deploy.sh` reads
+  it).
+- `PRODUCTION.md`: the containers' log driver, the host's log periods, Hetzner's backups, `--copy-only`, the journal
+  in "View logs", the new line in "Run a backup now", "Not covered yet".
+
+Verified:
+
+- `docker compose config` of `deploy/docker-compose.yml` with placeholder values: valid, each service `journald` with
+  its tag.
+- ShellCheck 0.11.0 on `deploy/sync.sh`, `deploy/backup/pg-backup.sh`, `restore-test.sh` and `install.sh`: only the
+  findings that `sync.sh` and `install.sh` had before (SC2029, SC2054; SC2329 in `restore-test.sh`).
+  `bash -n deploy/sync.sh`; `deploy/sync.sh --bogus` prints the new usage and exits 2.
+- `pg-backup` (a copy with only its config folder moved) against a throwaway `postgres:16` that logs to the journal:
+  `Wrote …`, the restore line naming that dump, `OK: 1 dumps`, exit 0; `last-success` with its four keys as before.
+- The dev stack (`docker-compose.yml`) with the `journald` driver on the laptop: `docker logs`, `docker compose logs
+  --since …` and `journalctl -t keycloak` read Keycloak's and its database's lines.
+- Not run: `sync.sh --copy-only` against a server (the finance checklist's step runs it first with `--dry-run`); the
+  smoke test (nothing deployed).
+
+Open:
+
+- The deploy, in the finance repository's checklist: Hetzner's backups switched on, the host's log settings,
+  `sync.sh --copy-only` of this commit, `install.sh server`, then the planned recreations of `postgres`, `keycloak`
+  and `caddy`, and the smoke test.
+
 ## 2026-10-02
 
 - Monthly update routine (Docker packages), on the server: `apt-get update` /

@@ -3,6 +3,9 @@
 #   deploy/sync.sh             show what would change, ask, copy, start, wait until healthy
 #   deploy/sync.sh --dry-run   only show what would change
 #   deploy/sync.sh --yes       same as the default, without asking
+#   deploy/sync.sh --copy-only the same checks, asks, copies; starts and restarts nothing (OPS-3: a change that
+#                              recreates containers, such as the logging driver, then recreates them one by one, by
+#                              hand, at a planned moment; PRODUCTION.md, "Deploy a change")
 # Copies the git-tracked files of deploy/ (working tree) to /opt/auth. It never
 # copies or overwrites the secrets there (.env and the Keycloak vault/ directory);
 # edit those on the server. Files it replaces are kept on the server in
@@ -29,12 +32,13 @@ SITES_DIR=/opt/caddy-sites # other projects' Caddy site files, mounted into cadd
 FOREIGN_COMPOSE=(docker-compose.override.yml docker-compose.override.yaml
   compose.override.yml compose.override.yaml compose.yml compose.yaml docker-compose.yaml)
 
-dry_run=0; assume_yes=0
+dry_run=0; assume_yes=0; copy_only=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) dry_run=1 ;;
     --yes|-y) assume_yes=1 ;;
-    *) echo "usage: $0 [--dry-run] [--yes]" >&2; exit 2 ;;
+    --copy-only) copy_only=1 ;;
+    *) echo "usage: $0 [--dry-run] [--yes] [--copy-only]" >&2; exit 2 ;;
   esac
 done
 
@@ -120,8 +124,13 @@ then
 fi
 
 [ "$dry_run" -eq 1 ] && exit 0
+if [ "$copy_only" -eq 1 ]; then
+  question="Copy to $SERVER:$DEST, without starting or restarting anything? [y/N] "
+else
+  question="Deploy to $SERVER:$DEST and run docker compose up -d? [y/N] "
+fi
 if [ "$assume_yes" -eq 0 ]; then
-  read -r -p "Deploy to $SERVER:$DEST and run docker compose up -d? [y/N] " answer
+  read -r -p "$question" answer
   [[ "$answer" =~ ^[yY]$ ]] || { echo "Aborted."; exit 1; }
 fi
 
@@ -141,6 +150,14 @@ echo "== Copying (replaced files go to /root/auth-sync-backups/$ts/)"
 remote "echo '$rev $ts' > $DEST/.deployed-revision"
 remote "install -o root -g root -m 755 $DEST/caddy-site.sh /usr/local/sbin/caddy-site" </dev/null
 echo "Installed /usr/local/sbin/caddy-site"
+
+if [ "$copy_only" -eq 1 ]; then
+  echo "== Copied only (--copy-only): no container was started, recreated or restarted."
+  remote "cd $DEST && docker compose ps -a --format '{{.Service}} {{.State}} {{.Health}} {{.CreatedAt}}'" </dev/null
+  echo "Copied revision $rev. The containers above keep their settings until they are recreated, as planned"
+  echo "(PRODUCTION.md, \"Deploy a change\"); a later sync.sh without --copy-only recreates every one that differs."
+  exit 0
+fi
 
 echo "== docker compose up -d"
 remote "cd $DEST && docker compose up -d"

@@ -11,11 +11,13 @@
 # auth_caddy_data. Under any other name compose would create new, empty ones.
 name: auth
 
+# Every container logs to the host's journal (OPS-3), which keeps 14 days (PRODUCTION.md, "Logs"); the tag is the
+# journal's SYSLOG_IDENTIFIER, the container's name: journalctl -t auth-caddy-1. docker logs and docker compose logs
+# read it back. A container takes a new driver only when it is recreated.
 x-logging: &logging
-  driver: json-file
+  driver: journald
   options:
-    max-size: "10m"
-    max-file: "5"
+    tag: "{{.Name}}"
 
 services:
   postgres:
