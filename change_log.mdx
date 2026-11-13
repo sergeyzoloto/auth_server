@@ -1,5 +1,70 @@
 # Changelog
 
+## 2026-11-13
+
+UX-15 of the finance repository (its `docs/family-budget/requirements.md`, D-613 to D-622 and the agent's D-623 to
+D-636; its `deploy/RUNBOOK.md`, "UX-15's deploy checklist with the suite"): Keycloak's sign-in pages, account console
+and emails in the app's design C. One commit on `main`, the commit of this entry, "UX-15: a Keycloak theme in design C,
+its mount, sync.sh restarts keycloak for a theme change, Mailpit in the dev stack". **Not pushed.** Nothing deployed and
+nothing changed on the server: the finance checklist deploys this commit and sets the realm's values with kcadm.
+
+- Decisions that touch this repository: D-613 (the pages, the account console and the emails in design C, the realm's
+  name "Finance Tracker"), D-615 (one theme, its mount, `sync.sh`, the dev stack on production's image), D-616 (which
+  theme a page shows: the cookie `ft_theme`, else the device), D-618 to D-620 (the pages, the console, the emails),
+  D-621 (the realm's settings and their rollback values), D-622 (Mailpit, the deploy's order), D-628 (the rollback's
+  `displayName` `myapps`: kcadm can't unset one), D-630 and D-631 (`sync.sh`; a later theme change renames the changed
+  file).
+- `deploy/themes/finance-tracker/`: `login/` (parent `keycloak.v2`), `account/` (parent `keycloak.v3`), `email/`
+  (parent `keycloak`), each with `theme.properties` (`darkMode=false`). No template copied for login or account:
+  `css/tokens.css` (the app's 22 tokens per theme and its Plex Sans faces, generated from the finance repository's
+  `frontend/src/index.css` and `fonts.css`), `css/login.css`, `css/account.css` and `js/theme.js`, after the parents'
+  own styles and scripts. The nine `woff2` files of `@fontsource/ibm-plex-sans` 5.3.0 and `OFL.txt` in each type's
+  `resources/fonts/`. For the email only `html/template.ftl` (one layout, inline styles, the body's link a button with
+  the plain link under it) and two subjects in `messages/messages_en.properties`.
+- `deploy/docker-compose.yml`: `./themes/finance-tracker:/opt/keycloak/themes/finance-tracker:ro` on `keycloak`.
+- `deploy/sync.sh`: a file under `themes/` in rsync's list sets `theme_changed`; after the copy every file under
+  `/opt/auth/themes` 644 and every directory 755; after `docker compose up -d`, `keycloak` restarted unless it was
+  just recreated; the note that sign-in is unavailable for about a minute; `--dry-run` says it would restart,
+  `--copy-only` that a restart is needed.
+- `docker-compose.yml` (dev): Keycloak `26.7.4@sha256:82a77884…` (production's), the theme mounted, and Mailpit
+  `axllent/mailpit:v1.32.0@sha256:0790692b…` on 127.0.0.1:8025 and 1025. `realm-export.json`: D-621's settings with
+  SMTP to Mailpit, the client's name "Finance Tracker" and base URL `http://localhost:5173/`, and `testuser` in
+  `default-roles-myapps`.
+- `PRODUCTION.md`: the realm's table (display name and themes, SMTP's sender name), the containers' theme mount,
+  "Theme" (its parts, which theme a page shows, where its tokens and fonts come from, the cache, registration without a
+  password while `verifyEmail` is on), "Deploy a change" (a theme change restarts `keycloak`), "Realm display name, theme
+  and email sender" (the values and their rollback values). `README.md`: the dev stack's Mailpit and the dev realm's
+  step.
+
+Verified:
+
+- The parent themes read from the pinned image's JARs (`keycloak-themes`, `keycloak-account-ui`, `keycloak-services`,
+  `keycloak-server-spi`): PatternFly 5, no minor version in the image; the default themes `keycloak.v2`, `keycloak.v3`,
+  `keycloak`; the account console's `referrer` resolved to the client's base URL.
+- `docker compose config` of `docker-compose.yml` and of `deploy/docker-compose.yml` (placeholder values): exit 0, the
+  theme's mount read-only in both, Mailpit in the dev one only.
+- ShellCheck 0.11.0 on `deploy/sync.sh`: exit 1 with SC2029 and SC2054 twice each, exactly as on `2f0d02c`; `bash -n`
+  passes; `--bogus` prints the usage and exits 2; the theme detection on rsync-style lines (a theme file 1; a theme
+  directory, another file, nothing 0).
+- The dev stack with the theme: every page of D-618 in each theme at 1280 and 375 px, the account console's three
+  pages and the verify, reset and identity-provider-link emails in Mailpit (the finance repository's `npm run
+  screens:keycloak`, 156 screenshots, no page wider than its window); the emails' subjects "Verify your email for
+  Finance Tracker" and "Reset your Finance Tracker password".
+- A throwaway Keycloak 26.7.4 with the theme root-owned at 644/755 and the theme cache on: every CSS, script and font
+  200; its resource version the same after a restart.
+- A throwaway Keycloak importing `realm-export.json`: D-621's settings, the client's name and base URL, `testuser`'s
+  `default-roles-myapps`.
+- The checklist's kcadm commands as written, on a dev realm whose SMTP map has production's shape and on the dev
+  `myapps`: read back D-621's values, only `fromDisplayName` changed in the map, the password still
+  `${vault.smtppassword}`; the rollback block gave the map back exactly. `-d displayName` and `displayName=` leave a
+  display name in place (D-628).
+- Not run: `sync.sh` against the server, the smoke test and kcadm on production (the finance checklist's steps).
+
+Open:
+
+- The deploy, by the finance repository's "UX-15's deploy checklist with the suite", steps A0 to A11.
+- An email from production, seen once after the deploy (the checklist's step 5 says how).
+
 ## 2026-10-26
 
 OPS-3 of the finance repository (its `docs/family-budget/requirements.md`, D-273 to D-279 and the agent's D-280 to

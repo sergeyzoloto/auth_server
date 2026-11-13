@@ -1,0 +1,389 @@
+/* Finance Tracker's sign-in pages in design C (the finance repository's UX-15, D-618), over keycloak.v2's PatternFly 5
+   markup: every colour is a token of css/tokens.css, every size is D-618's. Keycloak's IDs, names and texts stay. */
+
+:root {
+  --ft-font: 'IBM Plex Sans', system-ui, sans-serif;
+  /* PatternFly's own variables, so that what isn't restyled below still takes the theme. */
+  --pf-v5-global--FontFamily--text: var(--ft-font);
+  --pf-v5-global--FontFamily--heading: var(--ft-font);
+  --pf-v5-global--FontFamily--redhatfont--text: var(--ft-font);
+  --pf-v5-global--FontFamily--redhatfont--heading: var(--ft-font);
+  --pf-v5-global--Color--100: var(--text);
+  --pf-v5-global--Color--200: var(--muted);
+  --pf-v5-global--BackgroundColor--100: var(--surface);
+  --pf-v5-global--BorderColor--100: var(--border);
+  --pf-v5-global--link--Color: var(--accent);
+  --pf-v5-global--link--Color--hover: var(--accent);
+  --pf-v5-global--primary-color--100: var(--accent);
+  --pf-v5-global--danger-color--100: var(--danger);
+}
+
+html, body, .login-pf body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ft-font);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* The page: a centred column at most 400px wide, 16px sides under 40rem. */
+.pf-v5-c-login {
+  background: var(--bg);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 48px 16px;
+  box-sizing: border-box;
+}
+.pf-v5-c-login__container {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  padding: 0;
+  margin: 0 auto;
+}
+
+/* The realm's name, set like the app's wordmark; no logo, no background image. */
+.pf-v5-c-login__header {
+  display: block;
+  margin: 0 0 20px;
+  padding: 0;
+  text-align: center;
+}
+#kc-header-wrapper {
+  color: var(--text) !important;
+  font-family: var(--ft-font);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: center;
+  padding: 0;
+}
+#kc-header-wrapper * { color: inherit; }
+div.kc-logo-text { background-image: none; width: auto; height: auto; }
+div.kc-logo-text span { display: inline; }
+
+/* The panel. */
+.pf-v5-c-login__main {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  margin: 0;
+  box-shadow: none;
+}
+.pf-v5-c-login__main-header {
+  border-top: 0;
+  padding: 0;
+  margin: 0 0 20px;
+  display: block;
+}
+.pf-v5-c-login__main-header-utilities { margin-top: 12px; }
+#kc-page-title, .pf-v5-c-login__main-header .pf-v5-c-title {
+  font-family: var(--ft-font);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.pf-v5-c-login__main-body { padding: 0; }
+.pf-v5-c-login__main-footer { padding: 0; }
+.pf-v5-c-login__main-footer:empty { display: none; }
+
+.pf-v5-c-form { gap: 16px; }
+.pf-v5-c-form__group { gap: 6px; }
+
+/* Fields: the label 13px muted above; the input 40px, raised, its border the control's, radius 6px. */
+.pf-v5-c-form__label, .pf-v5-c-form__label-text {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.pf-v5-c-form__group-label { padding-bottom: 0; }
+.pf-v5-c-form__label-required { color: var(--danger); }
+.pf-v5-c-form-control {
+  --pf-v5-c-form-control--BorderRadius: 6px;
+  --pf-v5-c-form-control--before--BorderColor: transparent;
+  --pf-v5-c-form-control--after--BorderColor: transparent;
+  --pf-v5-c-form-control--hover--after--BorderColor: transparent;
+  --pf-v5-c-form-control--focus-within--after--BorderColor: transparent;
+  --pf-v5-c-form-control--m-error--after--BorderColor: transparent;
+  --pf-v5-c-form-control--BackgroundColor: var(--surface-raised);
+  --pf-v5-c-form-control--Color: var(--text);
+  min-height: 40px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.pf-v5-c-form-control::before, .pf-v5-c-form-control::after { border: 0; }
+.pf-v5-c-form-control > input, .pf-v5-c-form-control > select, .pf-v5-c-form-control > textarea {
+  min-height: 38px;
+  font-family: var(--ft-font);
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  padding: 0 12px;
+}
+.pf-v5-c-form-control.pf-m-readonly { background: var(--surface); }
+.pf-v5-c-form-control.pf-m-error, .pf-v5-c-form-control:has(> [aria-invalid="true"]) { border-color: var(--danger); }
+.pf-v5-c-form-control.pf-m-error > input { padding-right: 12px; }
+.pf-v5-c-form-control__icon.pf-m-status, .pf-v5-c-form-control__utilities { display: none; }
+.pf-v5-c-form-control:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-v5-c-form-control > input:focus, .pf-v5-c-form-control > select:focus { outline: none; }
+
+/* The password's show button inside the field's border: the group is the field, the input loses its own. */
+.pf-v5-c-input-group {
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  min-height: 40px;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+.pf-v5-c-input-group:has(.pf-m-error, [aria-invalid="true"]) { border-color: var(--danger); }
+.pf-v5-c-input-group:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-v5-c-input-group .pf-v5-c-form-control { border: 0; min-height: 38px; background: transparent; }
+.pf-v5-c-input-group .pf-v5-c-form-control:focus-within { outline: none; }
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  --pf-v5-c-button--after--BorderColor: transparent;
+  --pf-v5-c-button--hover--after--BorderColor: transparent;
+  --pf-v5-c-button--focus--after--BorderColor: transparent;
+  --pf-v5-c-button--active--after--BorderColor: transparent;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-radius: 0 5px 5px 0;
+  min-height: 38px;
+  padding: 0 12px;
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after { border: 0; }
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control:hover { color: var(--text); }
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Errors under a field, 13px. */
+.pf-v5-c-helper-text__item.pf-m-error, .pf-v5-c-helper-text__item-text.pf-m-error, .kc-feedback-text.pf-m-error,
+#input-error, [id^="input-error"] {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 18px;
+}
+.pf-v5-c-helper-text__item-text { font-size: 13px; color: var(--muted); }
+
+/* "Forgot Password?" right-aligned under the password, its helper line's last item. */
+.pf-v5-c-helper-text__item:has(> .pf-v5-c-helper-text__item-text > a[href*="reset-credentials"]) { margin-left: auto; }
+.pf-v5-c-helper-text__item-text a { font-size: 13px; }
+
+/* Checkboxes. */
+.pf-v5-c-check__label { color: var(--text); font-size: 14px; }
+.pf-v5-c-check__input { accent-color: var(--accent); }
+
+/* Links. */
+a, .pf-v5-c-button.pf-m-link, .pf-v5-c-button.pf-m-link.pf-m-inline {
+  color: var(--accent);
+  --pf-v5-c-button--m-link--Color: var(--accent);
+  --pf-v5-c-button--m-link--hover--Color: var(--accent);
+  --pf-v5-c-button--m-link--focus--Color: var(--accent);
+}
+a:hover { color: var(--accent); text-decoration: underline; }
+
+/* Buttons: the primary full width, 40px, the accent; the others default ones. */
+.pf-v5-c-button {
+  font-family: var(--ft-font);
+  font-size: 14px;
+  border-radius: 6px;
+}
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--accent);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--accent);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--accent);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--accent);
+  --pf-v5-c-button--m-primary--Color: var(--on-accent);
+  --pf-v5-c-button--m-primary--hover--Color: var(--on-accent);
+  --pf-v5-c-button--m-primary--focus--Color: var(--on-accent);
+  --pf-v5-c-button--m-primary--active--Color: var(--on-accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  min-height: 40px;
+}
+.pf-v5-c-button.pf-m-primary:hover { filter: brightness(1.06); }
+.pf-v5-c-button.pf-m-primary.pf-m-block, #kc-login { width: 100%; }
+.pf-v5-c-button.pf-m-secondary, .pf-v5-c-button.pf-m-tertiary {
+  --pf-v5-c-button--m-secondary--BackgroundColor: var(--surface);
+  --pf-v5-c-button--m-secondary--hover--BackgroundColor: var(--surface-raised);
+  --pf-v5-c-button--m-secondary--focus--BackgroundColor: var(--surface);
+  --pf-v5-c-button--m-secondary--active--BackgroundColor: var(--surface-raised);
+  --pf-v5-c-button--m-secondary--Color: var(--text);
+  --pf-v5-c-button--m-secondary--hover--Color: var(--text);
+  --pf-v5-c-button--m-secondary--focus--Color: var(--text);
+  --pf-v5-c-button--m-secondary--active--Color: var(--text);
+  --pf-v5-c-button--m-secondary--after--BorderColor: var(--border-control);
+  --pf-v5-c-button--m-secondary--hover--after--BorderColor: var(--border-control);
+  --pf-v5-c-button--m-secondary--focus--after--BorderColor: var(--border-control);
+  --pf-v5-c-button--m-secondary--active--after--BorderColor: var(--border-control);
+  --pf-v5-c-button--m-tertiary--Color: var(--text);
+  --pf-v5-c-button--m-tertiary--after--BorderColor: var(--border-control);
+  background: var(--surface);
+  color: var(--text);
+  min-height: 40px;
+}
+/* A button with no kind of its own (keycloak.v2 defines no default class: "Account already exists"'s two) is a
+   default button too. */
+.pf-v5-c-button:not(.pf-m-primary):not(.pf-m-secondary):not(.pf-m-tertiary):not(.pf-m-link):not(.pf-m-control):not(.pf-m-plain) {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-control);
+  min-height: 40px;
+}
+.pf-v5-c-button:not(.pf-m-primary):not(.pf-m-secondary):not(.pf-m-tertiary):not(.pf-m-link):not(.pf-m-control):not(.pf-m-plain):hover {
+  background: var(--surface-raised);
+}
+.pf-v5-c-button::after { border-radius: 6px; }
+/* A link drawn as a button ("« Back to Login", "Try Another Way"): its label centred like a button's. */
+a.pf-v5-c-button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+a.pf-v5-c-button:hover { text-decoration: none; }
+#updateProfile + #linkAccount, .pf-v5-c-button.pf-m-block + .pf-v5-c-button.pf-m-block, #kc-select-try-another-way-form { margin-top: 12px; }
+#kc-form-buttons { margin-top: 16px; }
+
+.pf-v5-c-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pf-v5-c-form__actions { gap: 12px; margin: 4px 0 0; }
+.pf-v5-c-form__actions > * { margin: 0; }
+
+/* "Or sign in with" between two lines, then Google and GitHub side by side, their icons in the text's colour. */
+.pf-v5-c-login__main-footer-band {
+  border: 0;
+  padding: 0;
+  margin: 20px 0 0;
+  text-align: center;
+}
+.pf-v5-c-login__main-footer-band:first-child { margin-block-start: 20px; }
+#kc-social-providers { margin: 0; }
+.pf-v5-c-login__main-footer-band:has(+ #kc-social-providers) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pf-v5-c-login__main-footer-band:has(+ #kc-social-providers)::before,
+.pf-v5-c-login__main-footer-band:has(+ #kc-social-providers)::after {
+  content: '';
+  flex: 1 1 0;
+  border-top: 1px solid var(--border);
+}
+.pf-v5-c-login__main-footer-band:has(+ #kc-social-providers) .pf-v5-c-login__main-footer-band-item,
+.pf-v5-c-login__main-footer-band:has(+ #kc-social-providers) .pf-v5-u-font-size-sm {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  margin: 0;
+}
+#kc-social-providers ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+#kc-social-providers li { padding: 0; margin: 0; }
+/* PatternFly's utility classes on these buttons are !important. */
+#kc-social-providers a.pf-v5-c-button {
+  justify-content: center !important;
+  gap: 8px;
+  width: 100%;
+}
+#kc-social-providers a.pf-v5-c-button .pf-v5-u-m-auto { margin: 0 !important; }
+#kc-social-providers svg, #kc-social-providers svg:not(.google) { height: 16px; width: 16px; filter: none; }
+#kc-social-providers svg, #kc-social-providers svg path:not([fill="none"]) { fill: currentColor; }
+
+/* "New user? Register" (and any page's other info line) under the panel: keycloak.v2 puts it inside, so it is placed
+   below the panel's border, which the panel leaves room for. */
+.pf-v5-c-login__main { position: relative; }
+.pf-v5-c-login__main:has(#kc-info) { margin-bottom: 56px; }
+#kc-info {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 16px 0 0;
+  padding: 0;
+}
+#kc-registration-container, #kc-info-wrapper {
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+  line-height: 18px;
+}
+#kc-registration-container { font-size: 14px; }
+
+/* Alerts, as the app's notices. */
+.pf-v5-c-alert {
+  --pf-v5-c-alert--BoxShadow: none;
+  --pf-v5-c-alert--BorderTopWidth: 0;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 14px;
+}
+.pf-v5-c-alert .pf-v5-c-alert__title, .pf-v5-c-alert .kc-feedback-text { color: inherit; font-weight: 400; font-size: 14px; }
+.pf-v5-c-alert .pf-v5-c-alert__icon { color: inherit; }
+.pf-v5-c-alert.pf-m-danger { background: var(--danger-bg); color: var(--danger); }
+.pf-v5-c-alert.pf-m-warning { background: var(--notice-bg); color: var(--text); }
+.pf-v5-c-alert.pf-m-success { background: var(--success-bg); color: var(--success); }
+.pf-v5-c-alert.pf-m-info { background: var(--surface-raised); color: var(--text); }
+
+/* Lists, tiles and code on the one-time code's pages. */
+.pf-v5-c-list, .pf-v5-c-list li, #kc-totp-settings, #kc-totp-settings li { color: var(--text); }
+.pf-v5-c-tile {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+}
+.pf-v5-c-tile.pf-m-selected { border-color: var(--accent); outline: 1px solid var(--accent); }
+.pf-v5-c-tile__title, .pf-v5-c-tile__icon { color: var(--text); }
+.pf-v5-c-data-list, .pf-v5-c-data-list__item { background: var(--surface); color: var(--text); border-color: var(--border); }
+/* A QR code needs a white quiet zone to scan, in every theme: the one literal colour here. */
+#kc-totp-secret-qr-code { background: #fff; padding: 8px; border-radius: 6px; }
+code, pre, #kc-totp-secret-key {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+hr { border-color: var(--border); }
+
+/* keycloak.v2's "Restart login" tooltip: hidden it still widened a 375px page (left: 160%); shown on hover only, under
+   its button, inside the field. */
+.kc-login-tooltip .kc-tooltip-text {
+  display: none;
+  left: auto;
+  right: 0;
+  top: calc(100% + 6px);
+  background-color: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.kc-login-tooltip:hover .kc-tooltip-text, .kc-login-tooltip:focus-visible .kc-tooltip-text { display: block; visibility: visible; opacity: 1; }
+.kc-login-tooltip .kc-tooltip-text::after { display: none; }
+
+@media (max-width: 40rem) {
+  .pf-v5-c-login { padding: 24px 16px; }
+  .pf-v5-c-login__main { padding: 20px 16px; }
+  html, body, .login-pf body { font-size: 15px; }
+  .pf-v5-c-form-control, .pf-v5-c-input-group { min-height: 44px; }
+  .pf-v5-c-form-control > input, .pf-v5-c-form-control > select { min-height: 42px; font-size: 16px; }
+  .pf-v5-c-input-group .pf-v5-c-form-control, .pf-v5-c-input-group .pf-v5-c-button.pf-m-control { min-height: 42px; }
+}

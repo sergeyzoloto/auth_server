@@ -125,6 +125,11 @@ for r in "" @1.1.1.1 @8.8.8.8; do for n in auth.finance-nl.com app.finance-nl.co
   mounted there read-only. It belongs to uid 1000, the container's `keycloak`
   user (no account on the host has that uid), group 0, directory mode 500 and
   file mode 400, so only that user and root can read it.
+- Since UX-15 of the finance repository (2026-11), Keycloak also mounts the
+  theme `/opt/auth/themes/finance-tracker` read-only at
+  `/opt/keycloak/themes/finance-tracker` (see "Theme"). `sync.sh` copies it
+  with the other files of `deploy/` and sets its files 644 and directories 755,
+  owned by root, so that uid 1000 reads them.
 
 ### Realm `myapps`
 
@@ -136,12 +141,13 @@ identity providers, the default role and the admin events expiration):
 
 | Area                  | Setting                                                                                                                                                                                                                                                                                                                                            |
 |-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Display name, themes  | `displayName` = `Finance Tracker` (the sign-in pages' header, the emails' realm name), `displayNameHtml` unset; `loginTheme`, `accountTheme` and `emailTheme` = `finance-tracker` (see "Theme"); no client has a login theme of its own. Set by UX-15's checklist (the finance repository); before it no display name and Keycloak's default themes (unset) |
 | Registration, login   | `registrationAllowed`, `registrationEmailAsUsername`, `verifyEmail`, `resetPasswordAllowed` and `loginWithEmailAllowed` on; `duplicateEmailsAllowed`, `editUsernameAllowed` and `rememberMe` off                                                                                                                                                   |
 | Identity providers    | `google` and `github`, shown on the login page, first login flow `first broker login` (the default, unchanged). Details in "Identity providers" below                                                                                                                                                                                              |
 | Default roles         | `default-roles-myapps` = `offline_access`, `uma_authorization`, `account` → `manage-account` and `view-profile` (Keycloak's defaults), plus `finance-tracker` → `user` since stage 5, so every user, new or existing, may use Finance Tracker                                                                                                      |
 | Password policy       | `length(12) and maxLength(128) and notUsername and notEmail`                                                                                                                                                                                                                                                                                       |
 | Brute-force detection | temporary lockout only (`permanentLockout` off): after 10 failed logins the user waits 60 s, and every further 10 failures add 60 s (strategy `MULTIPLE`), up to 15 minutes; the count resets 12 hours after the last failure; two failures within 1 s also cause a 60 s wait                                                                      |
-| SMTP                  | `smtp-relay.brevo.com`, port 587, STARTTLS on, SSL off, authentication with the Brevo SMTP login, password `${vault.smtppassword}`; from `noreply@finance-nl.com`, display name `finance-nl.com`. Hetzner blocks outbound ports 25 and 465, so 587 is the only option. finance-nl.com is authenticated in Brevo; SPF, DKIM and DMARC pass at Gmail |
+| SMTP                  | `smtp-relay.brevo.com`, port 587, STARTTLS on, SSL off, authentication with the Brevo SMTP login, password `${vault.smtppassword}`; from `noreply@finance-nl.com`, display name `Finance Tracker` (`finance-nl.com` until UX-15). Hetzner blocks outbound ports 25 and 465, so 587 is the only option. finance-nl.com is authenticated in Brevo; SPF, DKIM and DMARC pass at Gmail |
 | User events           | stored for 30 days, all event types. The `jboss-logging` listener also writes error events (`LOGIN_ERROR` and the like) to the Keycloak container log                                                                                                                                                                                              |
 | Admin events          | stored without representation details, kept 90 days (realm attribute `adminEventsExpiration` = 7776000 s, since stage 5); Keycloak's periodic cleanup deletes older ones                                                                                                                                                                           |
 | Tokens                | refresh-token rotation: `revokeRefreshToken` on, `refreshTokenMaxReuse` 0. Other lifetimes are Keycloak's defaults: access token 5 min, SSO session idle 30 min and max 10 h, offline session idle 30 days with no maximum, access code 1 min, login 30 min, user action 5 min, action tokens 5 min (user) and 12 h (admin)                        |
@@ -318,6 +324,60 @@ kc get users/7df2283a-b1c7-4959-a9ac-e88f71859ba6/federated-identity -r myapps
 
 The last line lists the providers linked to one user (here the first user).
 
+### Theme (`finance-tracker`)
+
+Since UX-15 of the finance repository (its `requirements.md`, D-613 to D-622
+and the agent's from D-623), Keycloak's pages look like the Finance Tracker
+app: its design C, its three themes Blue, Light and Dark, and IBM Plex Sans.
+One theme, [`deploy/themes/finance-tracker/`](deploy/themes/finance-tracker/),
+with three types:
+
+- `login/`: parent `keycloak.v2` of Keycloak 26.7.4 (PatternFly 5, its `pf-v5-`
+  classes; the image names no minor version). No template is copied:
+  `css/tokens.css` and `css/login.css` come after keycloak.v2's own styles,
+  which stay, and `js/theme.js` runs in the page's head before the first
+  paint. The IDs and names stay Keycloak's (the app's end-to-end suite signs
+  in through `#username`, `#password` and `#kc-login`), and so do the texts,
+  in English.
+- `account/`: parent `keycloak.v3`, the account console, the same way:
+  `css/tokens.css`, `css/account.css`, and `js/theme.js`, which the console
+  loads as a module. The masthead's "Finance Tracker" is drawn by CSS in
+  place of Keycloak's logo.
+- `email/`: parent `keycloak`. Only `html/template.ftl`, the HTML layout of
+  every email, is replaced (inline styles, Light's colours, no web font; a
+  body's link becomes a button with the plain link under it), and two
+  subjects are set in `messages/messages_en.properties`. The bodies and every
+  plain-text version stay Keycloak's.
+- `darkMode=false` in each `theme.properties`: only the app's three themes,
+  never keycloak.v2's or keycloak.v3's own dark mode.
+
+Which theme a page shows: the cookie `ft_theme` (`blue`, `light` or `dark`),
+which the app writes on a choice with `Domain=finance-nl.com`, else the
+device (dark gives Blue, light or none Light), followed live while there is
+no cookie. Nothing on the server reads the cookie.
+
+- **Where the tokens come from:** the 22 values per theme in
+  `css/tokens.css` are copies of the finance repository's
+  `frontend/src/index.css` (its D-496). Change them there first, then copy
+  them here; the same file is in `login/` and `account/`.
+- **Fonts:** IBM Plex Sans 400, 500 and 600, latin, latin-ext and cyrillic,
+  `woff2`, the files of the app's `@fontsource/ibm-plex-sans` 5.3.0, in each
+  type's `resources/fonts/` with `OFL.txt`. Nothing comes from a CDN.
+- **Cache:** production runs with Keycloak's theme cache on, so a changed
+  file is read only after `keycloak` restarts (`sync.sh` does it, see "Deploy
+  a change"). Keycloak's resource paths carry a version that a restart
+  doesn't change (checked on a throwaway 26.7.4), so a browser may keep an
+  older copy of a changed file: a later change gives the changed CSS or script
+  a new file name, named in `theme.properties`.
+- **Registration:** with `verifyEmail` on, Keycloak 26.7 asks for a new
+  account's password only after its email is verified, not on the
+  registration form (its `RegistrationPassword`); the theme changes nothing
+  of it.
+- **Locally:** the dev stack mounts the same folder (`start-dev`, no cache),
+  and Mailpit catches its emails (README, "Dev realm: the theme and email").
+  The finance repository's `npm run screens:keycloak` takes every page in
+  each theme from it, in realms of its own that it deletes afterwards.
+
 ### Host
 
 - SSH: public key only, `PermitRootLogin prohibit-password`, no X11
@@ -490,6 +550,19 @@ cd /opt/auth && docker compose up -d && docker compose restart --no-deps caddy
 ```
 
 The restart makes Caddy load the restored Caddyfile (see above).
+
+**A theme change** (a file under `deploy/themes/`, UX-15): Keycloak caches
+themes in production, so `sync.sh` restarts `keycloak` after the copy unless
+`docker compose up -d` has just recreated it (as the first deploy of the
+theme does, for its new mount), and says first that sign-in is unavailable
+for about a minute; `--dry-run` says it would, and `--copy-only` restarts
+nothing and says a restart is needed. After the copy it sets every file under
+`/opt/auth/themes` to 644 and every directory to 755. `sync.sh` never deletes
+a file on the server: a theme file removed from `deploy/` stays in
+`/opt/auth/themes` until it is removed by hand. To undo a theme deploy, the
+commands above put the replaced files back; then `docker compose restart
+--no-deps keycloak`. The realm's own settings (the theme's name, the display
+name) are not files: see "Realm display name, theme and email sender".
 
 The first directory, `/root/auth-sync-backups/20260927T121134Z`, holds the
 setup from before stage 2. It also needs the variables that were removed
@@ -709,6 +782,35 @@ the admin console can turn it back on (this is how it was disabled on
 id=$(kc get clients -r myapps -q clientId=automation-cli --fields id --format csv --noquotes)
 kc update clients/$id -r myapps -s enabled=false
 ```
+
+### Realm display name, theme and email sender
+
+UX-15 of the finance repository sets, with kcadm (its checklist, "UX-15's
+deploy checklist with the suite", writes every command out):
+
+| Setting | UX-15's value | The rollback value |
+|---|---|---|
+| `displayName` | `Finance Tracker` | `myapps` (the owner's choice in UX-15, in place of D-621's "no displayName"): kcadm can't unset it on 26.7.4 (`-d displayName` and an empty value both leave it as it is, tried on throwaway dev realms). Without one the sign-in pages showed the realm's name, `myapps`, and the emails `Myapps`; with `myapps` the pages read as before and the emails say `myapps` |
+| `displayNameHtml` | unset (unchanged) | unset |
+| `loginTheme` | `finance-tracker` | `keycloak.v2` (Keycloak 26.7's default for login, read from the image's `ThemeSelectorProvider`) |
+| `accountTheme` | `finance-tracker` | `keycloak.v3` (the default for the account console) |
+| `emailTheme` | `finance-tracker` | `keycloak` (the default for email) |
+| `smtpServer.fromDisplayName` | `Finance Tracker` | `finance-nl.com` |
+
+- kcadm's `update` reads the realm, changes the keys given with `-s` and
+  writes the whole realm back, so `-s 'smtpServer.fromDisplayName=…'` writes
+  the whole `smtpServer` map as read back with that one key changed; the
+  password stays `${vault.smtppassword}` (tried on the dev realm with a map of
+  production's shape).
+- Read the map with `--fields 'smtpServer(*)'`: `--fields smtpServer` prints
+  `{ }` whatever it holds.
+- The client `finance-tracker` gets no login theme of its own: the realm's
+  applies. Its name (`Finance Tracker`) and base URL
+  (`https://app.finance-nl.com/`) give the account console's "Back to Finance
+  Tracker" (the app links to `…/account?referrer=finance-tracker`, which
+  Keycloak 26.7 turns into the client's base URL; no `referrer_uri`, so no
+  redirect URI is added).
+- To roll back the files too: see "Deploy a change".
 
 ### Vault: add or rotate a secret
 

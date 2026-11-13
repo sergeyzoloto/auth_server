@@ -62,6 +62,10 @@ services:
       # /opt/auth/vault on the server: owner uid 1000 (the container's keycloak
       # user), directory 0500, files 0400. Not in git; sync.sh never touches it.
       - ./vault:/opt/keycloak/vault:ro
+      # The realm's login, account and email theme (the finance repository's UX-15, D-615; PRODUCTION.md, "Theme").
+      # Files 644 and directories 755, which sync.sh sets, so that the keycloak user (uid 1000) reads them. Keycloak
+      # caches themes here: sync.sh restarts keycloak when a file under themes/ changed.
+      - ./themes/finance-tracker:/opt/keycloak/themes/finance-tracker:ro
     networks:
       default:
         # Caddy's upstream name (Caddyfile), on this stack's own network only.

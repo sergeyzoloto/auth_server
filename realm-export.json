@@ -1,6 +1,16 @@
 {
   "realm": "myapps",
   "enabled": true,
+  "displayName": "Finance Tracker",
+  "loginTheme": "finance-tracker",
+  "accountTheme": "finance-tracker",
+  "emailTheme": "finance-tracker",
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@finance-tracker.test",
+    "fromDisplayName": "Finance Tracker"
+  },
   "roles": {
     "realm": [
       {
@@ -72,7 +82,9 @@
     },
     {
       "clientId": "finance-tracker",
+      "name": "Finance Tracker",
       "enabled": true,
+      "baseUrl": "http://localhost:5173/",
       "publicClient": false,
       "secret": "finance-tracker-secret",
       "standardFlowEnabled": true,
@@ -116,7 +128,8 @@
         }
       ],
       "realmRoles": [
-        "user"
+        "user",
+        "default-roles-myapps"
       ],
       "clientRoles": {
         "shop-api": [

@@ -17,6 +17,10 @@
 # merged into this stack, such as docker-compose.override.yml. Before copying,
 # it validates the new Caddyfile together with the site files in
 # /opt/caddy-sites. It installs deploy/caddy-site.sh as /usr/local/sbin/caddy-site.
+# Keycloak's theme (themes/, the finance repository's UX-15, D-615): its files are set 644 and its directories 755
+# after the copy, so that the container's keycloak user (uid 1000) reads them, and since production caches themes,
+# a change under themes/ restarts keycloak (sign-in unavailable for about a minute) unless docker compose up -d has
+# just recreated it; --dry-run says it would, --copy-only says a restart is needed.
 # Requires: git, rsync, ssh with key access to root on the server (with python3).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -70,6 +74,10 @@ fi
 
 echo "== Dry run: $SERVER:$DEST (revision $rev)"
 changes=$("${RSYNC[@]}" --dry-run --itemize-changes "${excludes[@]}" --files-from=<(echo "$files") ./ "$SERVER:$DEST/")
+# A file under themes/ that would be sent: Keycloak caches themes, so it reads the change only after a restart.
+theme_changed=0
+if awk '$1 ~ /^<f/ && $2 ~ /^themes\// { found = 1 } END { exit !found }' <<<"$changes"; then theme_changed=1; fi
+THEME_NOTE="A file under themes/ changed: keycloak restarts to load it, and sign-in is unavailable for about a minute."
 if [ -z "$changes" ]; then
   echo "No file changes."
 else
@@ -123,7 +131,14 @@ then
   exit 1
 fi
 
-[ "$dry_run" -eq 1 ] && exit 0
+if [ "$dry_run" -eq 1 ]; then
+  if [ "$theme_changed" -eq 1 ]; then
+    echo "== Theme: a file under themes/ would change. sync.sh would restart keycloak to load it (unless docker compose"
+    echo "   up -d recreates it anyway); sign-in would be unavailable for about a minute."
+  fi
+  exit 0
+fi
+[ "$theme_changed" -eq 0 ] || [ "$copy_only" -eq 1 ] || echo "⚠️  $THEME_NOTE"
 if [ "$copy_only" -eq 1 ]; then
   question="Copy to $SERVER:$DEST, without starting or restarting anything? [y/N] "
 else
@@ -148,6 +163,9 @@ echo "== Copying (replaced files go to /root/auth-sync-backups/$ts/)"
 "${RSYNC[@]}" --itemize-changes --backup --backup-dir="/root/auth-sync-backups/$ts" \
   "${excludes[@]}" --files-from=<(echo "$files") ./ "$SERVER:$DEST/"
 remote "echo '$rev $ts' > $DEST/.deployed-revision"
+# The keycloak user (uid 1000) reads the theme through a read-only mount: files 644 and directories 755, whatever the
+# laptop's modes were.
+remote "if [ -d $DEST/themes ]; then find $DEST/themes -type d -exec chmod 755 {} + && find $DEST/themes -type f -exec chmod 644 {} +; echo 'themes/: files 644, directories 755'; fi" </dev/null
 remote "install -o root -g root -m 755 $DEST/caddy-site.sh /usr/local/sbin/caddy-site" </dev/null
 echo "Installed /usr/local/sbin/caddy-site"
 
@@ -156,11 +174,25 @@ if [ "$copy_only" -eq 1 ]; then
   remote "cd $DEST && docker compose ps -a --format '{{.Service}} {{.State}} {{.Health}} {{.CreatedAt}}'" </dev/null
   echo "Copied revision $rev. The containers above keep their settings until they are recreated, as planned"
   echo "(PRODUCTION.md, \"Deploy a change\"); a later sync.sh without --copy-only recreates every one that differs."
+  if [ "$theme_changed" -eq 1 ]; then
+    echo "⚠️  A file under themes/ changed: keycloak keeps the old theme until it restarts. Restart it at a planned moment"
+    echo "   (cd $DEST && docker compose restart --no-deps keycloak); sign-in is unavailable for about a minute."
+  fi
   exit 0
 fi
 
+keycloak_before=$(remote "cd $DEST && docker compose ps -q keycloak" </dev/null)
 echo "== docker compose up -d"
 remote "cd $DEST && docker compose up -d"
+
+if [ "$theme_changed" -eq 1 ]; then
+  if [ "$(remote "cd $DEST && docker compose ps -q keycloak" </dev/null)" != "$keycloak_before" ]; then
+    echo "== keycloak was recreated by docker compose up -d: it reads the new theme"
+  else
+    echo "== $THEME_NOTE"
+    remote "cd $DEST && docker compose restart --no-deps keycloak" </dev/null
+  fi
+fi
 
 # caddy mounts the Caddyfile as a single file, and rsync replaces a file by
 # renaming a new one over it, so a running caddy keeps the old one (a reload

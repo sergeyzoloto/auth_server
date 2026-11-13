@@ -13,7 +13,7 @@ per-project auth code.
 ## Layout
 ```
 keycloak-auth-server/
-├── docker-compose.yml         # dev: Keycloak + Postgres
+├── docker-compose.yml         # dev: Keycloak (production's image) + Postgres + Mailpit, with the theme mounted
 ├── realm-export.json          # dev realm, clients, roles, one test user — imported on first boot (dev only)
 ├── deploy/                    # production: Keycloak + Postgres + Caddy — see PRODUCTION.md
 │   ├── docker-compose.yml
@@ -22,6 +22,7 @@ keycloak-auth-server/
 │   ├── sync.sh                # deploys deploy/ to the server
 │   ├── caddy-site.sh          # installs or removes another project's Caddy site file (validated), on the server
 │   ├── smoke-test.sh          # checks production from the laptop (client smoke-test, no users)
+│   ├── themes/finance-tracker # the realm's login, account and email theme (PRODUCTION.md, "Theme")
 │   └── backup/                # nightly pg_dump, restore test, pull to the laptop (install.sh)
 └── spring-client-example/
     ├── application.yml        # points a Spring service at this realm
@@ -78,6 +79,42 @@ You should see `"realm_access": {"roles": ["user", ...]}` and
 
 Services running in the same Docker network as Keycloak should use
 `http://keycloak:8080/realms/myapps` as the issuer, not `localhost`.
+
+## Dev realm: the theme and email
+
+The dev stack runs production's Keycloak image (tag and digest) with
+`deploy/themes/finance-tracker` mounted, as production does, and with
+`start-dev` the theme cache is off: a change shows at the next page load.
+Mailpit catches every email the dev realm sends: open http://127.0.0.1:8025
+(its ports are bound to 127.0.0.1 only). Nothing like it is in `deploy/`.
+
+A fresh volume gets the settings from `realm-export.json`: the display name
+"Finance Tracker", the theme `finance-tracker` for login, account and email,
+SMTP to `mailpit:1025` with "Finance Tracker" as the sender's name, and the
+client `finance-tracker`'s name and base URL (`http://localhost:5173/`, the
+account console's "Back to Finance Tracker"). `testuser` also holds
+`default-roles-myapps`, as every production user does, which the account
+console needs.
+
+**Dev only**, for a volume that already holds the realm (`--import-realm`
+skips it): after `docker compose up -d`, **on the laptop** in this
+repository:
+
+```bash
+kc() { docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm.config </dev/null; }
+kc config credentials --server http://localhost:8080 --realm master --user admin --password admin_dev_password
+kc update realms/myapps -s 'displayName=Finance Tracker' -s loginTheme=finance-tracker -s accountTheme=finance-tracker -s emailTheme=finance-tracker -s smtpServer.host=mailpit -s smtpServer.port=1025 -s smtpServer.from=noreply@finance-tracker.test -s 'smtpServer.fromDisplayName=Finance Tracker'
+cid=$(kc get clients -r myapps -q clientId=finance-tracker --fields id --format csv --noquotes)
+kc update "clients/$cid" -r myapps -s 'name=Finance Tracker' -s baseUrl=http://localhost:5173/
+kc add-roles -r myapps --uusername testuser --rolename default-roles-myapps
+kc get realms/myapps --fields 'displayName,loginTheme,accountTheme,emailTheme,smtpServer(*)'
+docker compose exec -T keycloak rm -f /tmp/kcadm.config </dev/null
+```
+
+The last `get` prints the four settings and the SMTP map; `--fields
+smtpServer` without `(*)` prints `{ }` whatever the map holds. These are the
+dev stack's fixed dev credentials; never run this against production, whose
+settings UX-15's checklist in the finance repository sets.
 
 ## 5. Adding a fourth project, or changing a client
 Edit `realm-export.json`: copy one of the three client blocks in `clients`

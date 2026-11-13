@@ -16,9 +16,12 @@ services:
       retries: 10
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7
+    # Production's image, tag and digest (deploy/docker-compose.yml), so that the theme is checked on the same base
+    # (UX-15 of the finance repository, D-615).
+    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
     container_name: keycloak
     restart: unless-stopped
+    # start-dev turns the theme cache off: a change under deploy/themes shows at the next page load.
     command: ["start-dev", "--import-realm"]
     environment:
       KC_DB: postgres
@@ -31,9 +34,21 @@ services:
       - "8080:8080"
     volumes:
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      # The theme production mounts (deploy/docker-compose.yml).
+      - ./deploy/themes/finance-tracker:/opt/keycloak/themes/finance-tracker:ro
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Dev only: catches every email the dev realm sends (its SMTP is mailpit:1025; README, "Dev realm: the theme and
+  # email"). Read them at http://127.0.0.1:8025. Nothing like it is in deploy/.
+  mailpit:
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"   # web interface and API
+      - "127.0.0.1:1025:1025"   # SMTP
 
 volumes:
   keycloak_pg_data:
