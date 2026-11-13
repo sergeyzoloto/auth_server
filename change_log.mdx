@@ -2,6 +2,69 @@
 
 ## 2026-11-13
 
+UX-15-doc of the finance repository (its `requirements.md`, D-637 to D-642 and the agent's D-643 to D-646): UX-15's
+deploy of this repository's `87b478b` recorded, which closes the "Open" of UX-15's entry below. One commit on `main`,
+the commit of this entry, "UX-15-doc: UX-15's deploy recorded". **Not pushed.** Documents only: no file under `deploy/`
+changes, so `/opt/auth/.deployed-revision` stays `87b478b` until the next `sync.sh`, which then sends no file (D-642).
+Nothing changed on the server and no kcadm run for this entry.
+
+UX-15's deploy, 2026-11-13, by the finance repository's "UX-15's deploy checklist with the suite" (D-641; the PM read the
+output):
+
+- A0: both repositories as expected.
+- A1: `2f0d02c..87b478b main -> main`.
+- A2, the pre-flight at 13:42:43Z: no scheduled shutdown; `auth deployed: 2f0d02c 20261027T111822Z`, the newest sync
+  backup `20261027T111719Z`; `/opt/auth` without `themes`; `postgres:16.15@sha256:a3b7f434…`,
+  `keycloak:26.7.4@sha256:82a77884…` and `caddy:2.11.4@sha256:14a9c00d…` running (postgres and keycloak healthy), all
+  started 2026-11-13T04:00:23Z by the scheduled reboot; Keycloak's mounts the vault only.
+- A3, `sync.sh --dry-run`: revision `87b478b`; `docker-compose.yml`, `sync.sh` and the 31 files under
+  `themes/finance-tracker/`; the `.env` check OK; the Caddyfile valid, with Caddy's warning on `srv1` as before.
+- A4, `sync.sh`: the backup `/root/auth-sync-backups/20261113T134500Z/`; "themes/: files 644, directories 755";
+  `caddy-site` installed; `up -d` recreated `auth-keycloak-1` only ("keycloak was recreated by docker compose up -d", no
+  second restart, D-630); caddy runs the current Caddyfile; all 3 services up, deployed revision `87b478b`.
+- A5: `87b478b 20261113T134500Z`; the mounts of the vault and `/opt/auth/themes/finance-tracker`, both `rw=false`; `755
+  root:root` twice and `644 root:root`; files not 644 0, directories not 755 0, files 31; `account email login`;
+  keycloak started 13:45:03Z, healthy.
+- A6, the smoke test: `11 ok, 0 fail`.
+- A7: maintenance access on, by hand.
+- A8, read: no `displayName`, `displayNameHtml`, `loginTheme`, `accountTheme` or `emailTheme`; `smtpServer` with `host`
+  `smtp-relay.brevo.com`, `port` `587`, `starttls` `true`, `ssl` `false`, `auth` `true`, `user` the Brevo login,
+  `password` `${vault.smtppassword}`, `from` `noreply@finance-nl.com`, `fromDisplayName` `finance-nl.com`; the client
+  `finance-tracker` with `name` `Finance Tracker`, `baseUrl` `https://app.finance-nl.com/`, no `rootUrl`, no
+  `login_theme`.
+- A9: the update, no output.
+- A10, read back: `displayName` `Finance Tracker`; the three themes `finance-tracker`; the SMTP map as in A8 but
+  `fromDisplayName` `Finance Tracker`; the client unchanged.
+- A11: kcadm's session file deleted (`/tmp/kcadm.config` absent at 14:22Z); `automation-cli` disabled, `401`; the
+  sign-in page: `<title>Sign in to Finance Tracker`, `css/styles.css`, `css/tokens.css`, `css/login.css`,
+  `js/theme.js`. The checklist named three of these files: the fourth is keycloak.v2's own stylesheet, served through
+  the theme's path, and no header line printed, the check's grep being bound to one line; neither is a fault, and the
+  end-to-end suite's `10-themes` checks the header (D-638).
+- Then the finance side: `56c51bb` deployed, its suite passed on its first run, `finish` passed at 14:47:38Z (the
+  finance repository's runbook, "Deployed revisions").
+- Not recorded (D-641): A0's time.
+
+Changes:
+
+- `PRODUCTION.md`: the realm table's display name and themes row set on 2026-11-13 by UX-15's checklist (A8 to A10);
+  "Deploy a change" names the deployed revision `87b478b 20261113T134500Z` and the newest backup directory; "Theme" says
+  when it was deployed and names D-639's items 1 to 3 as open, pointing to the finance repository's "Later".
+
+Verified:
+
+- `git --no-pager diff --name-only 87b478b` names `PRODUCTION.md` and `change_log.mdx` only; nothing under `deploy/`.
+- `change_log.mdx` compiled with `@mdx-js/mdx`: no error.
+- Every hash, time, size and count above compared with D-641's text.
+
+Open:
+
+- The PM's review; then the owner pushes `main` (D-642).
+- D-639's items 1 to 3 (the emails' plain link and footer, the dim descriptions on "Select login method"), in the
+  finance repository's "Later".
+- The email from production (the owner's, optional), not recorded (D-641).
+
+## 2026-11-13
+
 UX-15 of the finance repository (its `docs/family-budget/requirements.md`, D-613 to D-622 and the agent's D-623 to
 D-636; its `deploy/RUNBOOK.md`, "UX-15's deploy checklist with the suite"): Keycloak's sign-in pages, account console
 and emails in the app's design C. One commit on `main`, the commit of this entry, "UX-15: a Keycloak theme in design C,

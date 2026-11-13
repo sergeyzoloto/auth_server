@@ -141,7 +141,7 @@ identity providers, the default role and the admin events expiration):
 
 | Area                  | Setting                                                                                                                                                                                                                                                                                                                                            |
 |-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Display name, themes  | `displayName` = `Finance Tracker` (the sign-in pages' header, the emails' realm name), `displayNameHtml` unset; `loginTheme`, `accountTheme` and `emailTheme` = `finance-tracker` (see "Theme"); no client has a login theme of its own. Set by UX-15's checklist (the finance repository); before it no display name and Keycloak's default themes (unset) |
+| Display name, themes  | `displayName` = `Finance Tracker` (the sign-in pages' header, the emails' realm name), `displayNameHtml` unset; `loginTheme`, `accountTheme` and `emailTheme` = `finance-tracker` (see "Theme"); no client has a login theme of its own. Set on 2026-11-13 by UX-15's checklist (the finance repository, its steps A8 to A10: read, set, read back); before it no display name and Keycloak's default themes (unset) |
 | Registration, login   | `registrationAllowed`, `registrationEmailAsUsername`, `verifyEmail`, `resetPasswordAllowed` and `loginWithEmailAllowed` on; `duplicateEmailsAllowed`, `editUsernameAllowed` and `rememberMe` off                                                                                                                                                   |
 | Identity providers    | `google` and `github`, shown on the login page, first login flow `first broker login` (the default, unchanged). Details in "Identity providers" below                                                                                                                                                                                              |
 | Default roles         | `default-roles-myapps` = `offline_access`, `uma_authorization`, `account` → `manage-account` and `view-profile` (Keycloak's defaults), plus `finance-tracker` → `user` since stage 5, so every user, new or existing, may use Finance Tracker                                                                                                      |
@@ -377,6 +377,18 @@ no cookie. Nothing on the server reads the cookie.
   and Mailpit catches its emails (README, "Dev realm: the theme and email").
   The finance repository's `npm run screens:keycloak` takes every page in
   each theme from it, in realms of its own that it deletes afterwards.
+- **Deployed** on 2026-11-13 by UX-15's checklist: `87b478b`, synced with
+  backup `20261113T134500Z`; `sync.sh`'s `up -d` recreated `keycloak` for the
+  mount (no second restart), and the realm's values were set after it.
+- **Open** (the finance repository's "Later", D-639, after UX-15's review):
+  1. the emails' plain link under the button, about 800 characters, dropped
+     from `email/html/template.ftl` (the plain-text part keeps it);
+  2. the emails' footer, which repeats each body's own "ignore" sentence,
+     naming the service only;
+  3. on "Select login method" ("Try Another Way" at a first sign-in through
+     Google or GitHub into an existing account), each way's description is
+     dimmer than `--muted` in Blue and Dark: a PatternFly variable isn't
+     mapped to a token in `login/resources/css/login.css`.
 
 ### Host
 
@@ -541,7 +553,9 @@ until it restarts: `sync.sh` restarts caddy when the Caddyfile inside it
 differs from `/opt/auth/Caddyfile` (about a second without HTTPS). The
 deployed revision is in `/opt/auth/.deployed-revision`, and the files it
 replaced are in `/root/auth-sync-backups/`, one directory per deploy named
-by UTC time. To undo the most recent deploy, **on the server**:
+by UTC time. Since UX-15's deploy (2026-11-13) the deployed revision is
+`87b478b 20261113T134500Z`, and the newest backup directory is
+`/root/auth-sync-backups/20261113T134500Z/`. To undo the most recent deploy, **on the server**:
 
 ```bash
 last=$(ls -1 /root/auth-sync-backups | tail -1)
