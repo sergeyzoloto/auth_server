@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-11-14
+
+UX-19 of the finance repository (its `docs/family-budget/requirements.md`, D-818 to D-821 by the PM and the agent's
+D-822 to D-827; its `deploy/RUNBOOK.md`, "UX-19's deploy checklist"): D-639's items 1 to 3, the theme's. One commit on
+`main`, the commit of this entry, "UX-19: the emails without the plain link and with a footer naming the service, Select
+login method's descriptions in the theme's muted colour". **Not pushed.** Nothing deployed and nothing changed on the
+server; the realm's values don't change.
+
+**Changes**
+
+- `deploy/themes/finance-tracker/email/html/template.ftl`: a body's link becomes the button only; the plain link under
+  it is gone (Keycloak's plain-text part keeps the link). The footer reads "Finance Tracker · app.finance-nl.com" (D-819)
+  in place of "Sent by Finance Tracker's sign-in. If you didn't expect it, you can ignore it."; each body's own "ignore"
+  sentence stays.
+- `deploy/themes/finance-tracker/login/resources/css/login.css` renamed to `login-2.css` (named in `theme.properties`),
+  so that no browser keeps the old copy under Keycloak's unchanged resource path (D-823). It also maps PatternFly's
+  scoped names: `--pf-v5-global--Color--dark-100`, `--dark-200`, `--light-100` and `--light-200`, the links' `--dark`,
+  `--dark--hover`, `--light` and `--light--hover`, and `--primary-color--dark-100` and `--light-100`, to the theme's
+  tokens. PatternFly's light-scope components (`.pf-v5-c-data-list`, `-form-control`, `-alert`, `-menu`, `-select`,
+  `-table`, `.pf-v5-t-light`) point `--pf-v5-global--Color--200` at `--dark-200`, so "Select login method"'s
+  descriptions (`pf-v5-u-color-200` inside a data list) were PatternFly's `#6A6E73` in every theme (D-822).
+- `PRODUCTION.md`, "Theme": the email bullet, the file's new name, and D-639's open items 1 to 3 replaced by what UX-19
+  did.
+
+**Verified**
+
+- On the dev stack (production's Keycloak image, the theme mounted, `start-dev`): the description's computed colour was
+  `rgb(106, 110, 115)` in Blue, Light and Dark before, and is `--muted` after (`#9AA8BD`, `#566173`, `#A4A6AD`).
+- The finance repository's `npm run screens:keycloak`, before and after, 156 screenshots each: only "Select login
+  method" differs, apart from the OTP set-up pages' random secret and QR code and two 10-pixel spots of the account
+  console, which this change doesn't style.
+- The emails in Mailpit: reset password, verify email, identity provider link, execute actions (update password and
+  verify email) and update email ("Verify new email"): the button without a plain link, the plain-text part with the
+  link, the new footer. The emails are Light in every theme (inline styles), so one each.
+
+**Open**
+
+- The deploy: `sync.sh` restarts `keycloak` for the changed theme files (the theme cache), finance's UX-19 checklist.
+- Not checked: the SMTP test email (the dev stack's master admin has no address), and organisation invites (no
+  organisation in the realm).
+
 ## 2026-11-13
 
 UX-15-doc of the finance repository (its `requirements.md`, D-637 to D-642 and the agent's D-643 to D-646): UX-15's

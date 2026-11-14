@@ -16,6 +16,20 @@
   --pf-v5-global--link--Color--hover: var(--accent);
   --pf-v5-global--primary-color--100: var(--accent);
   --pf-v5-global--danger-color--100: var(--danger);
+  /* The scoped names behind them (the finance repository's UX-19, D-639): PatternFly's light-scope components
+     (.pf-v5-c-data-list, -form-control, -alert, -menu, -select, -table, .pf-v5-t-light) point the names above at their
+     --dark-* values, and its dark-scope ones (.pf-v5-c-login__header, __footer, .pf-v5-t-dark) at their --light-*
+     values, so inside them PatternFly's own greys came back: "Select login method"'s descriptions were #6A6E73. */
+  --pf-v5-global--Color--dark-100: var(--text);
+  --pf-v5-global--Color--dark-200: var(--muted);
+  --pf-v5-global--Color--light-100: var(--text);
+  --pf-v5-global--Color--light-200: var(--muted);
+  --pf-v5-global--link--Color--dark: var(--accent);
+  --pf-v5-global--link--Color--dark--hover: var(--accent);
+  --pf-v5-global--link--Color--light: var(--accent);
+  --pf-v5-global--link--Color--light--hover: var(--accent);
+  --pf-v5-global--primary-color--dark-100: var(--accent);
+  --pf-v5-global--primary-color--light-100: var(--accent);
 }
 
 html, body, .login-pf body {

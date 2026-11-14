@@ -334,7 +334,7 @@ with three types:
 
 - `login/`: parent `keycloak.v2` of Keycloak 26.7.4 (PatternFly 5, its `pf-v5-`
   classes; the image names no minor version). No template is copied:
-  `css/tokens.css` and `css/login.css` come after keycloak.v2's own styles,
+  `css/tokens.css` and `css/login-2.css` (`login.css` before UX-19) come after keycloak.v2's own styles,
   which stay, and `js/theme.js` runs in the page's head before the first
   paint. The IDs and names stay Keycloak's (the app's end-to-end suite signs
   in through `#username`, `#password` and `#kc-login`), and so do the texts,
@@ -345,7 +345,9 @@ with three types:
   place of Keycloak's logo.
 - `email/`: parent `keycloak`. Only `html/template.ftl`, the HTML layout of
   every email, is replaced (inline styles, Light's colours, no web font; a
-  body's link becomes a button with the plain link under it), and two
+  body's link becomes a button, with no plain link under it since UX-19;
+  the footer only names the service, "Finance Tracker · app.finance-nl.com"),
+  and two
   subjects are set in `messages/messages_en.properties`. The bodies and every
   plain-text version stay Keycloak's.
 - `darkMode=false` in each `theme.properties`: only the app's three themes,
@@ -380,15 +382,18 @@ no cookie. Nothing on the server reads the cookie.
 - **Deployed** on 2026-11-13 by UX-15's checklist: `87b478b`, synced with
   backup `20261113T134500Z`; `sync.sh`'s `up -d` recreated `keycloak` for the
   mount (no second restart), and the realm's values were set after it.
-- **Open** (the finance repository's "Later", D-639, after UX-15's review):
-  1. the emails' plain link under the button, about 800 characters, dropped
-     from `email/html/template.ftl` (the plain-text part keeps it);
-  2. the emails' footer, which repeats each body's own "ignore" sentence,
-     naming the service only;
-  3. on "Select login method" ("Try Another Way" at a first sign-in through
-     Google or GitHub into an existing account), each way's description is
-     dimmer than `--muted` in Blue and Dark: a PatternFly variable isn't
-     mapped to a token in `login/resources/css/login.css`.
+- **D-639's items 1 to 3** (the finance repository's UX-19, D-818 to
+  D-821 and its agent's from D-822), done in UX-19, not deployed yet: the
+  emails' plain link under the button dropped (the plain-text part keeps
+  it); the footer "Finance Tracker · app.finance-nl.com" (D-819); and
+  "Select login method"'s descriptions in `--muted`: PatternFly's light-scope
+  components (`.pf-v5-c-data-list` among them) point
+  `--pf-v5-global--Color--200` at `--pf-v5-global--Color--dark-200`, and its
+  dark-scope ones at `--light-200`, which `login.css` didn't map, so they
+  were PatternFly's `#6A6E73`; `login-2.css` maps the `--dark-*` and
+  `--light-*` text, link and primary colours too. The file is renamed so that
+  no browser keeps the old copy (see "Cache"); `sync.sh` leaves the old
+  `login.css` on the server, unused.
 
 ### Host
 
