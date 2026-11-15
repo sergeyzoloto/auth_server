@@ -382,8 +382,15 @@ no cookie. Nothing on the server reads the cookie.
 - **Deployed** on 2026-11-13 by UX-15's checklist: `87b478b`, synced with
   backup `20261113T134500Z`; `sync.sh`'s `up -d` recreated `keycloak` for the
   mount (no second restart), and the realm's values were set after it.
+  Then on 2026-11-15 by UX-19's checklist (A1 to A6): `8b19e36`, synced
+  with backup `20261115T103055Z` (the two replaced files, `theme.properties`
+  and `template.ftl`); `up -d` recreated nothing, so `sync.sh` restarted
+  `keycloak` for the theme cache (started 2026-11-15T10:30:58Z, healthy);
+  the sign-in page serves `login-2.css` and no `login.css`, which stays in
+  `/opt/auth/themes`, unused; the smoke test 11 ok, 0 fail. The realm's
+  values didn't change.
 - **D-639's items 1 to 3** (the finance repository's UX-19, D-818 to
-  D-821 and its agent's from D-822), done in UX-19, not deployed yet: the
+  D-821 and its agent's from D-822), done in UX-19, deployed on 2026-11-15: the
   emails' plain link under the button dropped (the plain-text part keeps
   it); the footer "Finance Tracker · app.finance-nl.com" (D-819); and
   "Select login method"'s descriptions in `--muted`: PatternFly's light-scope
@@ -558,9 +565,10 @@ until it restarts: `sync.sh` restarts caddy when the Caddyfile inside it
 differs from `/opt/auth/Caddyfile` (about a second without HTTPS). The
 deployed revision is in `/opt/auth/.deployed-revision`, and the files it
 replaced are in `/root/auth-sync-backups/`, one directory per deploy named
-by UTC time. Since UX-15's deploy (2026-11-13) the deployed revision is
-`87b478b 20261113T134500Z`, and the newest backup directory is
-`/root/auth-sync-backups/20261113T134500Z/`. To undo the most recent deploy, **on the server**:
+by UTC time. Since UX-19's deploy (2026-11-15) the deployed revision is
+`8b19e36 20261115T103055Z`, and the newest backup directory is
+`/root/auth-sync-backups/20261115T103055Z/` (UX-15's, `20261113T134500Z`,
+before it). To undo the most recent deploy, **on the server**:
 
 ```bash
 last=$(ls -1 /root/auth-sync-backups | tail -1)

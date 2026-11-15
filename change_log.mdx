@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-11-15
+
+UX-19-doc of the finance repository (its `docs/family-budget/requirements.md`, D-838 to D-841 by the PM and the
+agent's D-842 to D-845): UX-19's deploy of this repository's `8b19e36` recorded, which closes the "Open" of UX-19's
+entry below. One commit on `main`, the commit of this entry, "UX-19-doc: UX-19's deploy recorded". **Not pushed.**
+Documents only: no file under `deploy/` changes, so `/opt/auth/.deployed-revision` stays `8b19e36` until the next
+`sync.sh`, which then sends no file. Nothing changed on the server and no kcadm run for this entry.
+
+UX-19's deploy, 2026-11-15, by the finance repository's "UX-19's deploy checklist with the suite" (D-838; the PM read
+the output). A1, the push of `8b19e36`, came right after the PM's acceptance, before A0, which ran afterwards in the
+PM's adapted form (D-838).
+
+- A2, the pre-flight at 10:29:14Z: no scheduled shutdown; `auth deployed: 87b478b 20261113T134500Z`; the three
+  containers started 2026-11-15T04:00:21Z (the reboot scheduled for 04:00:00Z happened, D-839); the mounts `rw=false`.
+- A3, `sync.sh --dry-run`: exactly the three files; the `.env` check OK; the Caddyfile valid, with Caddy's warning on
+  `srv1` as before.
+- A4, `sync.sh`: the backup `/root/auth-sync-backups/20261115T103055Z/`; `docker compose up -d` recreated nothing;
+  `keycloak` restarted, started 2026-11-15T10:30:58.248850821Z, healthy; "Deployed revision 8b19e36".
+- A5: `auth deployed: 8b19e36 20261115T103055Z`; `2` and `1`; files not 644: 0, directories not 755: 0, files: 32; the
+  sign-in page `<title>Sign in to Finance Tracker` with `styles.css`, `tokens.css`, `login-2.css` and `theme.js`, no
+  `login.css`.
+- A6, the smoke test: `11 ok, 0 fail`.
+- In the finance repository's step 5, the password-reset email by hand: the button, no plain link, the footer "Finance
+  Tracker · app.finance-nl.com".
+
+**Changes**
+
+- `PRODUCTION.md`, "Theme": the "Deployed" line names UX-19's sync of `8b19e36` and its backup; D-639's items 1 to 3
+  deployed on 2026-11-15. "Deploy a change": the deployed revision `8b19e36 20261115T103055Z` and the newest backup
+  directory.
+
+**Verified**
+
+- Every figure, time and name compared with the owner's output as the finance repository's record holds it.
+- `change_log.mdx` compiles with `@mdx-js/mdx` 3.1.1. The finance repository's `scripts/check-forbidden-names.sh`
+  covers its own tree only; this repository has no such script.
+
+**Open**
+
+- Nothing of the deploy. `login.css` stays on the server, unused, until removed by hand.
+
 ## 2026-11-14
 
 UX-19 of the finance repository (its `docs/family-budget/requirements.md`, D-818 to D-821 by the PM and the agent's
