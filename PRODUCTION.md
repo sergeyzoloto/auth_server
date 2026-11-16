@@ -565,9 +565,9 @@ until it restarts: `sync.sh` restarts caddy when the Caddyfile inside it
 differs from `/opt/auth/Caddyfile` (about a second without HTTPS). The
 deployed revision is in `/opt/auth/.deployed-revision`, and the files it
 replaced are in `/root/auth-sync-backups/`, one directory per deploy named
-by UTC time. Since UX-19's deploy (2026-11-15) the deployed revision is
-`8b19e36 20261115T103055Z`, and the newest backup directory is
-`/root/auth-sync-backups/20261115T103055Z/` (UX-15's, `20261113T134500Z`,
+by UTC time. Since OPS-4's deploy (2026-11-16) the deployed revision is
+`3c7b6ba 20261116T161042Z`, and the newest backup directory is
+`/root/auth-sync-backups/20261116T161042Z/` (UX-19's, `20261115T103055Z`,
 before it). To undo the most recent deploy, **on the server**:
 
 ```bash
@@ -1582,6 +1582,15 @@ digest **on the laptop** with `docker pull` of the new tag (for example
 sha256:…`), change the image line, and deploy with `deploy/sync.sh`.
 
 #### Upgrading Keycloak (26.7.4 to 26.8.2, OPS-4)
+
+**Deployed** on 2026-11-16 by the finance repository's "OPS-4's deploy checklist": `3c7b6ba`, synced with backup
+`20261116T161042Z`; the rollback point was `auth-2026-11-16T1609Z.dump` (289003 bytes, `pg-restore-test auth` PASS), not
+used. `docker compose up -d` recreated `auth-keycloak-1` only; Keycloak 26.8.2 started 16:10:45Z, "Updating database"
+at 16:11:17Z, the realms `myapps` and `master` migrated to 26.8.0 and 26.8.2 by 16:11:24Z, 0 `ERROR` lines,
+`migration_model` 26.7.4 and 26.8.2; sign-in was unavailable for under a minute (16:10:45Z to about 16:11:25Z). The smoke
+test, 11 ok and 0 fail, the sign-in page with `login-3.css`, the owner's sign-in with Google and with GitHub and the
+password-reset email over STARTTLS (Brevo) all passed. The same session upgraded Docker to 29.10.0 (D-925). The files'
+modes after the sync: 0 not 644, 0 directories not 755.
 
 Rehearsed on the laptop on a copy of production's realm (the nightly dump of 2026-11-16, Postgres 16.15, Keycloak 26.7.4,
 then 26.8.2 on the same database; throwaway containers on an `--internal` network, removed afterwards):

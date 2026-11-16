@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-11-16 (OPS-5, first commit)
+
+OPS-5-doc of the finance repository (its `docs/family-budget/requirements.md`, D-936 and D-937 by the PM): OPS-4's deploy
+of this repository's `3c7b6ba` recorded, which closes the "Open" of OPS-4's entry below. One commit on `main`. **Not
+pushed.** Documents only: no file under `deploy/` changes, so `/opt/auth/.deployed-revision` stays
+`3c7b6ba 20261116T161042Z` until the next `sync.sh`. Nothing changed on the server and no kcadm run for this entry.
+
+OPS-4's deploy, 2026-11-16, by the finance repository's "OPS-4's deploy checklist" (the PM read the output; its full
+record is OPS-4's row of the finance runbook's "Deployed revisions"):
+
+- The pre-flight at 16:05:10Z: no scheduled shutdown; `auth deployed: 8b19e36 20261115T103055Z`; Keycloak 26.7.4,
+  Postgres 16.15 and Caddy 2.11.4 healthy; `/` 38G, 21G used, 16G available; build cache 13.63GB (12.83GB reclaimable).
+- The rollback point: `auth-2026-11-16T1609Z.dump`, 289003 bytes, `pg-restore-test auth` PASS (tables 100, realms 2,
+  myapps_users 6, myapps_clients 9).
+- `sync.sh --dry-run`: exactly the five files; `sync.sh`: the backup `/root/auth-sync-backups/20261116T161042Z/`;
+  `up -d` recreated `auth-keycloak-1` only; "Deployed revision 3c7b6ba".
+- 16:12:08Z: `auth deployed: 3c7b6ba 20261116T161042Z`; Keycloak `26.8.2@sha256:c68e286c…` started 16:10:45Z, healthy, the
+  migration from 16:11:17Z to 16:11:24Z, 0 `ERROR`, `migration_model` 26.7.4 and 26.8.2; sign-in unavailable for under a
+  minute.
+- The smoke test `11 ok, 0 fail`; the sign-in page with `login-3.css` and no `login-2.css`, `social-github` and
+  `social-google`; the end-to-end suite passed (19, `new-family` skipped); the owner signed in with Google and GitHub;
+  the password-reset email came at 16:25Z over Brevo's STARTTLS (D-934).
+- After-dump `auth-2026-11-16T1631Z.dump`, 298098 bytes, `pg-restore-test auth` PASS (tables 101); Docker 29.10.0
+  installed at about 16:33Z (D-925), every container restarted once; the smoke test again 11 ok.
+- D-926's deletion done: `/root/keycloak-2026-09-27.sql` and `/root/auth-config-2026-09-27/`.
+
+**Changes**
+
+- `PRODUCTION.md`: "Deploy a change"'s deployed revision `3c7b6ba 20261116T161042Z` and its newest backup directory; a
+  "Deployed" paragraph under "Upgrading Keycloak".
+
+**Verified**
+
+- `change_log.mdx` compiled with `@mdx-js/mdx`. The numbers are the owner's, as the PM read them.
+
+**Open**
+
+- OPS-5's second commit: Postgres 16.16 and Caddy 2.11.9 (D-936), in this repository's own commit.
+
 ## 2026-11-16
 
 OPS-4 of the finance repository (its `docs/family-budget/requirements.md`, D-921 to D-928 by the owner and the PM, the
