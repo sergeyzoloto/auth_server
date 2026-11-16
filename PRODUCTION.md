@@ -6,7 +6,7 @@ Keycloak, Postgres and Caddy under Docker Compose, in `/opt/auth`.
 - Public URL: `https://auth.finance-nl.com`, realm `myapps`
 - Server: `2.28.108.199` (Ubuntu 26.04, 2 vCPU, 3.7 GiB RAM + 2 GB swap),
   SSH as `root` with a key only
-- Versions: Keycloak 26.7.4, Postgres 16.15, Caddy 2.11.4
+- Versions: Keycloak 26.8.2 (26.7.4 until OPS-4's deploy), Postgres 16.15, Caddy 2.11.4
 
 The dev stack in the repository root (`docker-compose.yml`,
 `realm-export.json`) is for local work only. It has a test user and fixed
@@ -332,9 +332,9 @@ app: its design C, its three themes Blue, Light and Dark, and IBM Plex Sans.
 One theme, [`deploy/themes/finance-tracker/`](deploy/themes/finance-tracker/),
 with three types:
 
-- `login/`: parent `keycloak.v2` of Keycloak 26.7.4 (PatternFly 5, its `pf-v5-`
+- `login/`: parent `keycloak.v2` of Keycloak 26.8.2 (PatternFly 5, its `pf-v5-`
   classes; the image names no minor version). No template is copied:
-  `css/tokens.css` and `css/login-2.css` (`login.css` before UX-19) come after keycloak.v2's own styles,
+  `css/tokens.css` and `css/login-3.css` (`login-2.css` in UX-19, `login.css` before) come after keycloak.v2's own styles,
   which stay, and `js/theme.js` runs in the page's head before the first
   paint. The IDs and names stay Keycloak's (the app's end-to-end suite signs
   in through `#username`, `#password` and `#kc-login`), and so do the texts,
@@ -368,10 +368,10 @@ no cookie. Nothing on the server reads the cookie.
 - **Cache:** production runs with Keycloak's theme cache on, so a changed
   file is read only after `keycloak` restarts (`sync.sh` does it, see "Deploy
   a change"). Keycloak's resource paths carry a version that a restart
-  doesn't change (checked on a throwaway 26.7.4), so a browser may keep an
+  doesn't change (checked on a throwaway 26.7.4; the version in the path did change with 26.8.2, `slyvt` to `7y2iq`, so an upgrade refreshes every cached file once), so a browser may keep an
   older copy of a changed file: a later change gives the changed CSS or script
   a new file name, named in `theme.properties`.
-- **Registration:** with `verifyEmail` on, Keycloak 26.7 asks for a new
+- **Registration:** with `verifyEmail` on, Keycloak 26.7 and 26.8 ask for a new
   account's password only after its email is verified, not on the
   registration form (its `RegistrationPassword`); the theme changes nothing
   of it.
@@ -592,13 +592,11 @@ commands above put the replaced files back; then `docker compose restart
 name) are not files: see "Realm display name, theme and email sender".
 
 The first directory, `/root/auth-sync-backups/20260927T121134Z`, holds the
-setup from before stage 2. It also needs the variables that were removed
-from `.env` then; they are in `/root/auth-config-2026-09-27/.env`. The
-compose files from before stage 4 (up to `20260927T135505Z`) mount
-`/opt/auth/realm-export.json`, which no longer exists; to go back to one of
-them, first copy `/root/auth-config-2026-09-27/realm-export.json` to
-`/opt/auth/` (it holds the old client secrets and the test user's password,
-but it is only imported into an empty database).
+setup from before stage 2. The old variables and `realm-export.json` it
+needed were in `/root/auth-config-2026-09-27/`, which was deleted at the end
+of OPS-4's deploy (D-926 of the finance repository): going back to a compose
+file from before stage 4 is no longer possible with these copies. Restore a
+dump instead ("Backups and restore").
 
 ### Change the admin IP
 
@@ -677,7 +675,7 @@ Expected last line: `== Summary: 11 ok, 0 fail ==`. The script needs
    grants";
 9. ports 5432, 8080 and 9000 are closed from outside (three checks).
 
-Keycloak 26.7.4 answers checks 7 and 8 with the same error code, so they
+Keycloak 26.7.4 and 26.8.2 (compared in OPS-4, identical answers) answer checks 7 and 8 with the same error code, so they
 compare the HTTP status and the `error_description` too: with a wrong
 `CLIENT_SECRET` in `smoke.env`, check 8 gets check 7's answer and fails
 (and so does check 5). After a Keycloak upgrade, compare these two answers
@@ -1315,7 +1313,6 @@ certificates.
 | Copies, 60 days                        | on the laptop: `~/backups/finance-nl-server/auth/`                                                      |
 | Pull script and timer                  | on the laptop: `~/.local/bin/finance-nl-backup-pull`, `~/.config/systemd/user/finance-nl-backup-pull.*` |
 | Pull key                               | on the laptop: `~/.ssh/finance-nl-backup`; on the server: its line in `/root/.ssh/authorized_keys`      |
-| One-off plain SQL dump from 2026-09-27 | on the server: `/root/keycloak-2026-09-27.sql`                                                          |
 
 #### Install or update the backup scripts
 
@@ -1581,21 +1578,52 @@ Keycloak, Postgres and Caddy versions change only when the image lines in
 (**on the server**: `systemctl start pg-backup@auth.service`; Keycloak
 migrates the schema on start and can't migrate back), get the new
 digest **on the laptop** with `docker pull` of the new tag (for example
-`docker pull quay.io/keycloak/keycloak:26.7.5`; it prints `Digest:
+`docker pull quay.io/keycloak/keycloak:26.8.2`; it prints `Digest:
 sha256:…`), change the image line, and deploy with `deploy/sync.sh`.
+
+#### Upgrading Keycloak (26.7.4 to 26.8.2, OPS-4)
+
+Rehearsed on the laptop on a copy of production's realm (the nightly dump of 2026-11-16, Postgres 16.15, Keycloak 26.7.4,
+then 26.8.2 on the same database; throwaway containers on an `--internal` network, removed afterwards):
+
+- The migration (27 Liquibase changesets, `26.7.4` to `26.8.2` in `migration_model`, the realms `myapps` and `master`
+  migrated to 26.8.0 and 26.8.2) took about 5 s; `docker compose up -d` to healthy took 22 s on the laptop (18 to 22 s
+  for every start, the `start` command's build step included). Expect 20 to 60 s of sign-in downtime on the server, and
+  the external monitors may email a failure meanwhile. Nothing else changed: the realm's settings, its clients, both
+  providers, the first login flow's executions, the default roles, the client policies and the counts were identical
+  before and after (only `scimApiEnabled` appears in the realm's attributes, `false`, and the table
+  `org_identity_provider` is new).
+- **Rollback of a failed upgrade is the pre-upgrade dump, restored with 26.7.4** ("Restore production from a dump"):
+  stop `keycloak` first, then rename and create, `pg_restore --single-transaction`, then start 26.7.4 (the image lines
+  put back in `deploy/docker-compose.yml`). Measured: stop 1.9 s, rename and create 0.1 s, restore 0.7 s, start to healthy
+  19 s, 21 s in all; the state after it equalled the state before. Registrations and changes made after the dump are lost.
+  26.7.4 started on the migrated database does **not** refuse: it logs "Possibly incorrect state of migration. You are
+  trying to run server version '26.7.4' against database, which was already migrated to newer version '26.8.2'" and runs
+  on a 26.8 schema (indexes dropped and added); never do it.
+- What 26.8 changes for this setup (tried in the dev stack on 26.7.4 and 26.8.2): the sign-in page's provider buttons
+  are `pf-m-tertiary` with `<img>` icons and the label "Sign in with GitHub" (26.7.4: secondary, inline SVG), which
+  `login-3.css` draws as before (the GitHub icon is black: turned to the text's colour in Blue and Dark; stacked under
+  40rem); "Account already exists" shows "Add to existing account" as the primary button; the QR code is in a bordered
+  box; resource paths carry a new version. A user who exists but hasn't verified their email, linked to a provider by the
+  email link, stays unverified and gets the VERIFY_EMAIL action (26.7.4 marked them verified: the fix of CVE-2026-97175's
+  kind); every other first sign-in case behaved the same (a provider's verified or unverified email, Trust Email on or
+  off, a new or an existing verified user), and the app realm's logout behaved the same, with or without a provider
+  logout URL (Google and GitHub have none). Refresh tokens: an online session's `refresh_expires_in` is the SSO idle
+  timeout (1800 s here) on both versions; only offline tokens changed (they carry `exp`, 30 days); the finance app's BFF
+  asked for no offline scope, and with a 90 s access token 8 parallel requests caused exactly one refresh per expiry.
+  `smoke-test.sh`'s two negative answers are identical. SMTP over STARTTLS is now required to upgrade (26.8.1): the
+  checklist's password-reset email proves it on Brevo. The Admin REST API now needs the `kc-admin-api` scope on the
+  calling client (else 401): `admin-cli` works in the dev stack; `automation-cli` (disabled) wasn't tried and may need
+  the scope at its next use.
 
 ### Safety copies from 2026-09-27
 
-**On the server**, taken before the stage 2 changes:
+**On the server**, taken before the stage 2 changes. `/root/auth-config-2026-09-27/` (a copy of `/opt/auth` with the old
+`.env`) and `/root/keycloak-2026-09-27.sql` (a plain `pg_dump` of a 26.7-era realm from before any user but the owner)
+were deleted at the end of OPS-4's deploy (D-926 of the finance repository); what is left:
 
-- `/root/auth-config-2026-09-27/`: copy of `/opt/auth` as it was (including
-  the old `.env`; mode 700). It restores the old setup only together with the
-  old variables it contains.
-- `/root/keycloak-2026-09-27.sql`: plain `pg_dump` of the `keycloak`
-  database (mode 600, 348 KiB).
 - `/root/iptables-before-ufw-2026-09-27.rules` and
   `/root/ip6tables-before-ufw-2026-09-27.rules`: firewall rules before ufw
   was enabled.
 
-The plain SQL dump restores with `psql`, not `pg_restore`. For a new dump,
-see "Run a backup now".
+For a new dump, see "Run a backup now".

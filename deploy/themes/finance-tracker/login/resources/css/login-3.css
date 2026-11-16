@@ -319,6 +319,21 @@ a.pf-v5-c-button:hover { text-decoration: none; }
 #kc-social-providers a.pf-v5-c-button .pf-v5-u-m-auto { margin: 0 !important; }
 #kc-social-providers svg, #kc-social-providers svg:not(.google) { height: 16px; width: 16px; filter: none; }
 #kc-social-providers svg, #kc-social-providers svg path:not([fill="none"]) { fill: currentColor; }
+/* Keycloak 26.8 (OPS-4): the provider buttons are tertiary, whose border keycloak.v2 draws in its own colour, and their
+   icons are <img> files (26.7.4: secondary buttons and inline SVG). The border is the control border again, the icon 16px,
+   GitHub's black one turned to the text's colour in the two dark themes, and under 40rem the two buttons stack so that
+   "Sign in with GitHub" and "Sign in with Google" have room. */
+.pf-v5-c-button.pf-m-tertiary::after { border-color: var(--border-control); }
+/* "or" (.kc-login-divider) and the list's own padding, which keycloak.v2 now sets with !important utilities. */
+.kc-login-divider { margin: 20px 0 0; text-align: center; font-size: 12px; line-height: 16px; color: var(--muted); }
+.kc-login-divider span { color: var(--muted); }
+#kc-social-providers ul.pf-v5-c-login__main-body { padding: 0 !important; }
+#kc-social-providers img { height: 16px; width: 16px; flex: none; }
+:root[data-theme="blue"] #kc-social-providers img[src$="/github.svg"],
+:root[data-theme="dark"] #kc-social-providers img[src$="/github.svg"] { filter: invert(1) brightness(0.9); }
+@media (max-width: 40rem) {
+  #kc-social-providers ul { grid-template-columns: 1fr; }
+}
 
 /* "New user? Register" (and any page's other info line) under the panel: keycloak.v2 puts it inside, so it is placed
    below the panel's border, which the panel leaves room for. */

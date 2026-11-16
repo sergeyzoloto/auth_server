@@ -18,7 +18,7 @@ services:
   keycloak:
     # Production's image, tag and digest (deploy/docker-compose.yml), so that the theme is checked on the same base
     # (UX-15 of the finance repository, D-615).
-    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     container_name: keycloak
     restart: unless-stopped
     # start-dev turns the theme cache off: a change under deploy/themes shows at the next page load.

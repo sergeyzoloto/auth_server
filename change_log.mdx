@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-11-16
+
+OPS-4 of the finance repository (its `docs/family-budget/requirements.md`, D-921 to D-928 by the owner and the PM, the
+agent's from D-929): production's Keycloak goes from 26.7.4 to 26.8.2, with the auth host's monthly session. One commit
+on `main`, the commit of this entry, "OPS-4: Keycloak 26.8.2". **Not pushed, not deployed.** Nothing was changed on the
+server and no command was run there.
+
+**Changes**
+
+- `deploy/docker-compose.yml`: Keycloak `26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0`,
+  the manifest-list digest that `docker pull quay.io/keycloak/keycloak:26.8.2` prints on the laptop (the same kind of
+  digest as the 26.7.4 pin, `82a77884…`); Postgres 16.15 and Caddy 2.11.4 keep their pins (D-922). The dev
+  `docker-compose.yml` takes the same line.
+- Theme: `login/resources/css/login-2.css` is `login-3.css` (a changed CSS gets a new name), `login/theme.properties`
+  names it. 26.8.2's provider buttons are `pf-m-tertiary` with `<img>` icons: the control border and a 16px icon again,
+  GitHub's black icon turned to the text's colour in Blue and Dark, the "or" divider's margin, the buttons stacked
+  under 40rem. `account/theme.properties`: the base's version.
+- `deploy/smoke-test.sh`: comments only (its two negative answers are identical on 26.8.2).
+- `PRODUCTION.md`: versions, "Theme" (`login-3.css`, the resource version that changed with 26.8.2), the smoke-test
+  note, the monthly routine's example tag, a section "Upgrading Keycloak (26.7.4 to 26.8.2, OPS-4)" (the rehearsed
+  migration, the rollback by the dump and its times, what 26.8 changes here), and D-926: `/root/keycloak-2026-09-27.sql`
+  and `/root/auth-config-2026-09-27/` described as deleted at the end of OPS-4's deploy (the backups table's row, "Deploy
+  a change"'s paragraph, "Safety copies" follow); the firewall-rule copies stay.
+
+**Verified** (all on the laptop; the numbers are in the finance repository's OPS-4 entry)
+- A rehearsal on the nightly dump of 2026-11-16 in throwaway containers on an `--internal` network: 26.7.4 then 26.8.2
+  on one database (healthy after 22 s, migration about 5 s, no `ERROR`), the realm's settings, clients, providers, flow,
+  default roles, client policies and counts identical before and after; the rollback (dump restored with 26.7.4) 21 s
+  and the state again as before.
+- The dev stack on 26.8.2: `npm run screens:keycloak` on both versions (156 images each; 102 identical; the rest listed in
+  the finance entry), the brokering matrix on both, the refresh values, the finance dev stack's BFF with a 90 s access
+  token, `deploy/smoke-test.sh`'s negative answers, `npm run e2e:local` and the guards.
+- No address of the dump is in this diff (0 hits).
+
+**Open**
+- The deploy: the finance repository's "OPS-4's deploy checklist" (the image pulled by digest, a backup and its restore
+  test, `deploy/sync.sh --dry-run` and `deploy/sync.sh`, the checks, the owner's Google sign-in and reset email, the monthly
+  session, D-926's deletion). This entry's "Open" is closed by the commit that records the deploy.
+
 ## 2026-11-15
 
 UX-19-doc of the finance repository (its `docs/family-budget/requirements.md`, D-838 to D-841 by the PM and the

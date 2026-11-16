@@ -54,10 +54,10 @@ else
   ko "token not obtained: $(echo "$resp" | jq -c '{error, error_description}' 2>/dev/null || echo "$resp" | head -c 300)"
 fi
 
-# 7. Negative checks. Keycloak 26.7.4 answers both with the error code
+# 7. Negative checks. Keycloak 26.7.4 and 26.8.2 (OPS-4: identical) answer both with the error code
 # unauthorized_client, so only the status and error_description tell a
 # rejected secret from a refused grant. The expected answers are exactly
-# Keycloak 26.7.4's; after a Keycloak upgrade, compare them with what it says.
+# those of Keycloak 26.7.4 and 26.8.2; after a Keycloak upgrade, compare them with what it says.
 # expect_error LABEL STATUS DESCRIPTION CURL_ARGS...: the token endpoint must
 # answer with this HTTP status, unauthorized_client and this error_description.
 expect_error() {

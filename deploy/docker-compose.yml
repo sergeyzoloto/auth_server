@@ -39,7 +39,7 @@ services:
     # ports: intentionally NONE — the DB must not be reachable from the internet
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     command: start                         # prod mode instead of start-dev; no realm import
     restart: unless-stopped
     depends_on:
