@@ -22,7 +22,7 @@ x-logging: &logging
 services:
   postgres:
     # Images are pinned to an exact version; the digest fixes the exact build.
-    image: postgres:16.15@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     restart: unless-stopped
     environment:
       POSTGRES_DB: keycloak
@@ -88,7 +88,7 @@ services:
     logging: *logging
 
   caddy:
-    image: caddy:2.11.4@sha256:14a9c00d4e833ebc2b65d36515b37bde3b73f0b323a2663aaafc88953d8c4e3f
+    image: caddy:2.11.9@sha256:4e2425f6009577e7c651010f16679c28f7d12df3e7b1914f941a7a3370746b3c
     restart: unless-stopped
     depends_on:
       keycloak:

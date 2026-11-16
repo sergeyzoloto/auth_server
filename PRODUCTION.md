@@ -6,7 +6,7 @@ Keycloak, Postgres and Caddy under Docker Compose, in `/opt/auth`.
 - Public URL: `https://auth.finance-nl.com`, realm `myapps`
 - Server: `2.28.108.199` (Ubuntu 26.04, 2 vCPU, 3.7 GiB RAM + 2 GB swap),
   SSH as `root` with a key only
-- Versions: Keycloak 26.8.2 (26.7.4 until OPS-4's deploy), Postgres 16.15, Caddy 2.11.4
+- Versions: Keycloak 26.8.2 (26.7.4 until OPS-4's deploy), Postgres 16.16 and Caddy 2.11.9 (16.15 and 2.11.4 until OPS-5's deploy, D-936)
 
 The dev stack in the repository root (`docker-compose.yml`,
 `realm-export.json`) is for local work only. It has a test user and fixed
@@ -83,7 +83,7 @@ app.finance-nl.com.   CAA  0 issue "sectigo.com"
 - `letsencrypt.org`: Let's Encrypt, Caddy's first issuer. Both current
   certificates come from it.
 - `sectigo.com`: ZeroSSL, whose certificates Sectigo issues, is Caddy's
-  fallback issuer. In Caddy 2.11.4 the fallback is active only when the
+  fallback issuer. In Caddy 2.11.4 (not tried again on 2.11.9, which the rehearsal ran with local certificates) the fallback is active only when the
   Caddyfile sets a global `email` option; `deploy/Caddyfile` sets none, so
   today Caddy asks only Let's Encrypt (and keeps retrying it). The record
   lets ZeroSSL issue without a DNS change if `email` is ever added.
@@ -1624,6 +1624,45 @@ then 26.8.2 on the same database; throwaway containers on an `--internal` networ
   checklist's password-reset email proves it on Brevo. The Admin REST API now needs the `kc-admin-api` scope on the
   calling client (else 401): `admin-cli` works in the dev stack; `automation-cli` (disabled) wasn't tried and may need
   the scope at its next use.
+
+#### Postgres 16.16 and Caddy 2.11.9 (OPS-5, D-936)
+
+Both are patch swaps within their series, in one window of `sync.sh` (only `deploy/docker-compose.yml` changes: the
+`postgres` and `caddy` image lines, each pinned by version and digest as `docker pull` prints it). Rehearsed on the
+laptop on the nightly dump of 2026-11-16 (`auth-2026-11-16T1631Z.dump`), in throwaway containers on `--internal` networks,
+removed by name afterwards:
+
+- **Postgres.** 16.15 (production's pin) initialised the data volume and restored the dump (101 tables, 0.6 s); 16.16
+  (`postgres:16.16@sha256:dd2bf3ce…`) then started on the same volume ("database system was shut down", ready in 0.3 s),
+  every table's row count and the schema dump identical, no `ERROR`. Keycloak 26.8.2 on it: healthy in 19.8 s, 0 `ERROR`
+  lines, `migration_model` unchanged (26.7.4 and 26.8.2 rows), the realm's discovery document 200. With Keycloak running
+  while the database container was replaced (stop, remove, 16.16 on the same volume and alias), the database was away
+  for 1.1 s and Keycloak's health and discovery stayed 200 for 30 s afterwards, 0 `ERROR` lines. The downgrade (16.16
+  back to 16.15 on the same volume, with a table written by 16.16) also started and read it. **No `REINDEX`**: the release
+  notes (16.16) advise it for B-tree indexes on `bpchar`, `gist_trgm_ops` and, if corruption is suspected, GIN; Keycloak's
+  schema has 252 indexes, all B-tree, none on a `bpchar` column, and the only extension is `plpgsql`. The release's 43
+  CVEs were weighed by D-922's item (about half need PL/Perl, PL/Tcl, dblink, postgres_fdw or subscriptions, which this
+  database doesn't use; the rest need a role that can run SQL, Keycloak's, or DDL rights); tzdata 2026f.
+- **Caddy.** The real `deploy/Caddyfile` and the finance repository's `deploy/finance.caddy` in Caddy 2.11.4 and in 2.11.9
+  (`caddy:2.11.9@sha256:4e2425f6…`), with local certificates, stub upstreams under the real names (`auth-keycloak`,
+  `finance-tracker-api`, `finance-tracker-web`), asked 53 requests each: every request with a valid host answered the
+  same (routes, the admin allowlist's 403, HSTS and CSP on the app, no `Server` or `Via`, the 308 redirects). What
+  differs, all by the release notes: a request whose `Host` is invalid or dots-only (`.`, `..`, `bad host`, `host/x`, a
+  list) is 400 on 2.11.9 and was 200 with an empty body (or a 308 to `https://./`) on 2.11.4 (2.11.8's change); a POST
+  larger than `request_body`'s 20 MiB is 413 at once (2.11.8). 2.11.6 added a 16 KiB limit on request headers (a 15000-byte
+  cookie passed on both, 20000 bytes failed on both) and 1-minute idle timeouts: an api answer after 95 s (the import takes
+  minutes) arrived on both. Browsers, UptimeRobot and `monitor.sh` send valid hosts. Notes read: 2.11.6, 2.11.7, 2.11.8 and
+  2.11.9 (2.11.5's page lists none): security fixes for `forward_auth` plus `reverse_proxy` (not used here), hop-by-hop
+  headers on 101 and 1xx responses, constant-time sticky cookies, FastCGI, file paths and Windows names (not used),
+  HTTP/2 `host` next to `:authority`, TLS `client_auth` merging (not used); `encode` now always sets `Vary:
+  Accept-Encoding`. `deploy/check-site.sh` (finance repository) validated the finance site file in 2.11.9.
+- **The deploy** is the finance repository's "OPS-5's deploy checklist": a fresh dump and its restore test first,
+  `sync.sh --dry-run` (the two image lines), `sync.sh`; `docker compose up -d` recreates `postgres` and `caddy` (and may
+  recreate `keycloak`, which depends on `postgres`: then sign-in is down as in OPS-4, 30 to 90 s). Expect the database away
+  for a few seconds and both sites for a few seconds while `caddy` is replaced (its certificates are in the `caddy_data`
+  volume). **The rollback** is the same swap back: the old compose file put back from `/root/auth-sync-backups/<time>/`
+  and `docker compose up -d` (no dump to restore: a minor release's data directory is read by both, as rehearsed in both
+  directions); the pre-deploy dump stays the last resort.
 
 ### Safety copies from 2026-09-27
 

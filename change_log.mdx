@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-16 (OPS-5)
+
+OPS-5 of the finance repository (its `docs/family-budget/requirements.md`, D-936 and D-937 by the PM, D-938 to D-944 by the
+agent): Postgres 16.15 to 16.16 and Caddy 2.11.4 to 2.11.9 on the auth stack (D-936), in one window of `sync.sh`. One
+commit on `main`, the commit of this entry, "OPS-5: Postgres 16.16 and Caddy 2.11.9". **Not pushed, not deployed.**
+Nothing was changed on the server and no command was run there.
+
+**Changes**
+
+- `deploy/docker-compose.yml`: `postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f` and
+  `caddy:2.11.9@sha256:4e2425f6009577e7c651010f16679c28f7d12df3e7b1914f941a7a3370746b3c`, the manifest-list digests that
+  `docker pull` printed on the laptop (the kind of digest the old pins were). Keycloak keeps its pin.
+- `PRODUCTION.md`: the versions line, a section "Postgres 16.16 and Caddy 2.11.9 (OPS-5, D-936)" with the rehearsal's
+  numbers, what the notes of 2.11.6 to 2.11.9 change and the rollback, and a note that line "DNS" about ZeroSSL's fallback was
+  written for 2.11.4.
+
+**Verified** (all on the laptop; the finance repository's OPS-5 entry has the full list)
+- The nightly dump of 2026-11-16 restored by 16.15 and then started by 16.16 on the same volume (identical row counts and
+  schema, no `REINDEX` needed: Keycloak's 252 indexes are all B-tree, none on `bpchar`), Keycloak 26.8.2 healthy on it in
+  19.8 s with 0 `ERROR`, the database container replaced under a running Keycloak (1.1 s away, health 200 throughout), and
+  the downgrade 16.16 to 16.15 on the same volume.
+- The real Caddyfile and `finance.caddy` in 2.11.4 and 2.11.9 behind stub upstreams, 53 requests each: identical for valid
+  hosts; invalid and dots-only hosts 400 (were 200), a POST over `request_body`'s limit 413 at once, a 95 s api answer and
+  a 15000-byte cookie pass on both. `deploy/check-site.sh` (finance repository) valid on 2.11.9.
+
+**Open**
+- The deploy: the finance repository's "OPS-5's deploy checklist" (a fresh dump and restore test, `sync.sh --dry-run`,
+  `sync.sh`, the checks, the smoke test, the owner's sign-in). This entry's "Open" is closed by the commit that records it.
+
 ## 2026-11-16 (OPS-5, first commit)
 
 OPS-5-doc of the finance repository (its `docs/family-budget/requirements.md`, D-936 and D-937 by the PM): OPS-4's deploy
