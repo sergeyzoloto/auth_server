@@ -493,7 +493,16 @@ no cookie. Nothing on the server reads the cookie.
 - Alerting on events. The finance repository's monitor
   (`.github/workflows/monitor.yml`, since OPS-3) checks every 15 minutes that
   the realm answers with its issuer and that both certificates have 14 days
-  left, and GitHub emails a failure. Events are stored in `myapps` (see
+  left, and GitHub emails a failure. **UptimeRobot is configured** (finance
+  repository D-335, set up by the PM in the owner's browser on 2026-11-17, free
+  plan, the owner's own account, email alerts with no delay and no repeat, the
+  default location, a 5-minute interval): HTTP(S) monitors of
+  `https://app.finance-nl.com/` and of
+  `https://auth.finance-nl.com/realms/myapps/.well-known/openid-configuration`,
+  both Up at their first check. A duplicate monitor of the first URL was made
+  while the account was being created; the owner decides which to delete. It
+  doesn't cover the api (it counts a 401 as down), so an api-only outage is
+  still caught only by the GitHub monitor, hours late. Events are stored in `myapps` (see
   above), but nothing reports on them.
 - **Spam registrations.** Registration is open with no captcha and no rate
   limit; only the email confirmation stands in the way. Watch the `REGISTER`
@@ -565,9 +574,9 @@ until it restarts: `sync.sh` restarts caddy when the Caddyfile inside it
 differs from `/opt/auth/Caddyfile` (about a second without HTTPS). The
 deployed revision is in `/opt/auth/.deployed-revision`, and the files it
 replaced are in `/root/auth-sync-backups/`, one directory per deploy named
-by UTC time. Since OPS-4's deploy (2026-11-16) the deployed revision is
-`3c7b6ba 20261116T161042Z`, and the newest backup directory is
-`/root/auth-sync-backups/20261116T161042Z/` (UX-19's, `20261115T103055Z`,
+by UTC time. Since OPS-5's deploy (2026-11-17) the deployed revision is
+`b809f9d 20261117T085513Z`, and the newest backup directory is
+`/root/auth-sync-backups/20261117T085513Z/` (OPS-4's, `20261116T161042Z`,
 before it). To undo the most recent deploy, **on the server**:
 
 ```bash
@@ -1663,6 +1672,19 @@ removed by name afterwards:
   volume). **The rollback** is the same swap back: the old compose file put back from `/root/auth-sync-backups/<time>/`
   and `docker compose up -d` (no dump to restore: a minor release's data directory is read by both, as rehearsed in both
   directions); the pre-deploy dump stays the last resort.
+- **Deployed** on 2026-11-17 (A5 at 08:55Z, outside the proposed window and outside every forbidden one): `b809f9d`,
+  synced with backup `/root/auth-sync-backups/20261117T085513Z/`; the dry run sent exactly `docker-compose.yml`'s two
+  image lines; `postgres` and `caddy` were recreated and `keycloak` was **not** (it showed Running, then Healthy). Postgres
+  `16.16` (`sha256:dd2bf3ce…`) started 08:55:15Z, healthy; Caddy `v2.11.9` (`sha256:4e2425f6…`) started 08:55:21Z;
+  Keycloak 26.8.2 kept running since 2026-11-16T16:32:47Z. Checks at 08:57Z: the postgres log had no
+  `ERROR`/`FATAL`/`PANIC` line, Caddy 0 error lines and 0 certificate requests, Keycloak 0 `ERROR`; `migration_model`
+  26.7.4 and 26.8.2; the smoke test 11 ok, 0 fail; `monitor.sh` passed every check (the app's certificate ends
+  2026-12-27, this host's 2026-12-21); a valid host 200 and `Host: ..` 400 (the new edge answering); the sign-in page
+  `Sign in to Finance Tracker` with `login-3.css`, `social-github` and `social-google`; the owner signed in with Google.
+  The dumps `auth-2026-11-17T0854Z.dump` (before) and `auth-2026-11-17T1003Z.dump` (after, 299596 bytes) both passed
+  `pg-restore-test auth` (the first: tables 101, realms 2, users 6, clients 9); `verify BATCH-1` of the finance
+  repository was OK at 10:03Z. Rollback not used. Disk before the finance deploy of the same day: `/` 38G, 22G used, 15G
+  free; after its build-cache prune 17G used, 19G free (the finance repository's runbook, "The server's disk and Docker").
 
 ### Safety copies from 2026-09-27
 

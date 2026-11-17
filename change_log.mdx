@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-17 (OPS-5-doc)
+
+OPS-5's deploy and UptimeRobot's setup recorded, as the PM read them from the owner's outputs (the finance repository's
+OPS-6 first commit, D-867). Documents only. The commit of this entry, on `main` on top of `b809f9d`. **Not pushed.**
+Nothing was changed on the server and no command was run there.
+
+**Changes**
+
+- `PRODUCTION.md`: the deployed revision (`b809f9d 20261117T085513Z`, the backup directory `20261117T085513Z/`), a
+  "Deployed" bullet in the section on Postgres 16.16 and Caddy 2.11.9 (what the owner's checks printed, `keycloak` not
+  recreated, no rollback), and UptimeRobot as configured in "Not covered yet" (the two monitors, the note that it doesn't
+  cover the api, the duplicate monitor).
+
+**Verified**
+- Every figure was copied from the PM's record; nothing in it contradicted this repository (the pins `16.16` and
+  `2.11.9`, the revision). `change_log.mdx` compiled with `@mdx-js/mdx`; `scripts/check-forbidden-names.sh` is the
+  finance repository's and was run there for the same stage.
+
+**Open**
+- Which of the two monitors of the site UptimeRobot keeps (the owner).
+
 ## 2026-11-16 (OPS-5)
 
 OPS-5 of the finance repository (its `docs/family-budget/requirements.md`, D-936 and D-937 by the PM, D-938 to D-944 by the
